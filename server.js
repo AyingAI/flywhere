@@ -17,6 +17,10 @@ const flyaiCache = new Map();
 const flyaiInflight = new Map();
 let flyaiQueue = Promise.resolve();
 let flyaiNextRunAt = 0;
+const searchCache = new Map();
+const searchInflight = new Map();
+const weatherCache = new Map();
+const geocodeCache = new Map();
 
 function loadEnv() {
   const envPath = path.join(__dirname, '.env');
@@ -140,6 +144,73 @@ async function getEchartsSource() {
 
 function wait(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
+function isoDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+async function resolveWeatherLocation(location) {
+  const latitude = Number(location.latitude); const longitude = Number(location.longitude);
+  if (Number.isFinite(latitude) && Number.isFinite(longitude)) return { ...location, latitude, longitude };
+  const city = String(location.city || '').trim();
+  if (!city) return null;
+  if (geocodeCache.has(city)) return { ...location, ...geocodeCache.get(city) };
+  async function geocode(term) {
+    const params = new URLSearchParams({ name: term, count: '5', language: 'zh', countryCode: 'CN' });
+    const response = await fetch(`https://geocoding-api.open-meteo.com/v1/search?${params}`, { signal: AbortSignal.timeout(10000) });
+    if (!response.ok) return [];
+    return (await response.json())?.results || [];
+  }
+  const fullCityName = /(?:市|自治州|地区|盟)$/.test(city) ? city : `${city}市`;
+  let matches = await geocode(fullCityName);
+  if (!matches.length) matches = await geocode(city);
+  const match = matches.sort((a, b) => Number(b.name === fullCityName) - Number(a.name === fullCityName) || Number(/^PPLA\d?$/.test(b.feature_code)) - Number(/^PPLA\d?$/.test(a.feature_code)) || Number(b.population || 0) - Number(a.population || 0))[0];
+  if (!match) return null;
+  const resolved = { latitude: Number(match.latitude), longitude: Number(match.longitude) };
+  geocodeCache.set(city, resolved);
+  return { ...location, ...resolved };
+}
+
+async function weatherForecast(payload) {
+  const locations = (Array.isArray(payload.locations) ? payload.locations : []).filter(item => item?.code && item?.city).slice(0, 20);
+  if (!locations.length) return { weather: {}, available: false, reason: '没有可查询的目的地' };
+  const resolved = (await Promise.all(locations.map(resolveWeatherLocation))).filter(Boolean);
+  const coordinates = Object.fromEntries(resolved.map(location => [location.code, { latitude: location.latitude, longitude: location.longitude }]));
+  if (!resolved.length) return { weather: {}, coordinates, available: false, reason: '暂时无法定位目的地' };
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const lastForecastDay = new Date(today); lastForecastDay.setDate(lastForecastDay.getDate() + 15);
+  const requestedStart = new Date(`${payload.startDate}T00:00:00`);
+  const requestedEnd = new Date(`${payload.endDate || payload.startDate}T00:00:00`);
+  if (!Number.isFinite(requestedStart.getTime()) || requestedStart > lastForecastDay || requestedEnd < today) return { weather: {}, coordinates, available: false, reason: '目的地天气仅在出发前 16 天内提供' };
+  const startDate = isoDate(requestedStart < today ? today : requestedStart);
+  const endDate = isoDate(requestedEnd > lastForecastDay ? lastForecastDay : requestedEnd);
+  const cacheKey = JSON.stringify({ locations: locations.map(item => [item.code, item.city, item.latitude, item.longitude]), startDate, endDate });
+  const cached = weatherCache.get(cacheKey);
+  if (cached?.expiresAt > Date.now()) return cached.data;
+  const params = new URLSearchParams({
+    latitude: resolved.map(item => item.latitude).join(','),
+    longitude: resolved.map(item => item.longitude).join(','),
+    daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max',
+    timezone: 'Asia/Shanghai',
+    start_date: startDate,
+    end_date: endDate
+  });
+  const response = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`, { signal: AbortSignal.timeout(12000) });
+  if (!response.ok) throw new Error(`天气服务暂不可用（HTTP ${response.status}）`);
+  const raw = await response.json(); const forecasts = Array.isArray(raw) ? raw : [raw]; const weather = {};
+  resolved.forEach((location, index) => {
+    const daily = forecasts[index]?.daily || {}; const minValues = (daily.temperature_2m_min || []).map(Number).filter(Number.isFinite); const maxValues = (daily.temperature_2m_max || []).map(Number).filter(Number.isFinite); const rainValues = (daily.precipitation_probability_max || []).map(Number).filter(Number.isFinite);
+    if (!minValues.length || !maxValues.length) return;
+    weather[location.code] = { city: location.city, latitude: location.latitude, longitude: location.longitude, code: Number(daily.weather_code?.[0] ?? -1), min: Math.round(Math.min(...minValues)), max: Math.round(Math.max(...maxValues)), rain: rainValues.length ? Math.round(Math.max(...rainValues)) : null, startDate, endDate, provider: 'Open-Meteo' };
+  });
+  const data = { weather, coordinates, available: Boolean(Object.keys(weather).length), startDate, endDate };
+  weatherCache.set(cacheKey, { data, expiresAt: Date.now() + 30 * 60 * 1000 });
+  if (weatherCache.size > 40) weatherCache.delete(weatherCache.keys().next().value);
+  return data;
+}
+
 function runFlyaiOnce(args, model) {
   return new Promise((resolve, reject) => {
     const env = { ...process.env, FLYAI_API_KEY: effective('FLYAI_API_KEY') };
@@ -169,7 +240,7 @@ function runFlyai(args, model) {
         const data = await runFlyaiOnce(args, model);
         flyaiNextRunAt = Date.now() + 450;
         flyaiCache.set(key, { data, expiresAt: Date.now() + 10 * 60 * 1000 });
-        if (flyaiCache.size > 40) flyaiCache.delete(flyaiCache.keys().next().value);
+        if (flyaiCache.size > 120) flyaiCache.delete(flyaiCache.keys().next().value);
         return data;
       } catch (error) {
         lastError = error;
@@ -241,53 +312,54 @@ function dateArgs(query, prefix) {
   if (start && end) return ['--dep-date-start', start, '--dep-date-end', end];
   throw new Error(prefix === 'dep' ? '请选择出发日期' : '请选择回程日期');
 }
+function validateTripDates(query) {
+  const depDate = String(query.depDate || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(depDate)) {
+    const error = new Error('请选择有效的出发日期'); error.statusCode = 400; throw error;
+  }
+  if (query.trip === 'oneway') return;
+  const backDate = String(query.backDate || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(backDate)) {
+    const error = new Error('请选择有效的回程日期'); error.statusCode = 400; throw error;
+  }
+  if (backDate < depDate) {
+    const error = new Error('回程日期不能早于出发日期'); error.statusCode = 400; throw error;
+  }
+}
 function airportFee(item) { return item.fee === null ? { amount: feePolicy.airportConstruction + feePolicy.fuelSurcharge, source: '预估' } : { amount: item.fee, source: '接口' }; }
-function uniqueFlights(flights, limit = 5) {
+function uniqueFlights(flights) {
   const seen = new Set();
   return flights.filter(flight => {
     const key = `${flight.airline}|${flight.time}|${flight.direct ? 'direct' : 'transfer'}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
-  }).slice(0, limit);
-}
-function diverseItineraries(results, limit = 5) {
-  const sorted = [...results].sort((a, b) => a.totalPrice - b.totalPrice);
-  const selected = [], seenOutbound = new Set(), seenPair = new Set();
-  for (const result of sorted) {
-    if (seenOutbound.has(result.outboundAirline)) continue;
-    seenOutbound.add(result.outboundAirline);
-    seenPair.add(result.airline);
-    selected.push(result);
-    if (selected.length === limit) return selected;
-  }
-  for (const result of sorted) {
-    if (seenPair.has(result.airline)) continue;
-    seenPair.add(result.airline);
-    selected.push(result);
-    if (selected.length === limit) break;
-  }
-  return selected;
+  });
 }
 
-async function search(query) {
+function searchCacheKey(query) {
+  return JSON.stringify({ origin: query.origin || '广州', destination: query.destination || 'all', trip: query.trip || 'round', depDate: query.depDate, backDate: query.backDate || '', outTimeStart: query.outTimeStart || '', outTimeEnd: query.outTimeEnd || '', backTimeStart: query.backTimeStart || '', backTimeEnd: query.backTimeEnd || '', model: query.model || effective('MODEL_NAME') });
+}
+
+async function searchFresh(query) {
   const origin = query.origin || '广州';
   const destination = query.destination && query.destination !== 'all' ? query.destination : null;
-  const common = ['--origin', origin, '--sort-type', '3'];
+  const common = ['--origin', origin];
   if (query.outTimeStart) common.push('--dep-hour-start', String(Number(query.outTimeStart.slice(0, 2))));
   if (query.outTimeEnd) common.push('--dep-hour-end', String(Number(query.outTimeEnd.slice(0, 2))));
   const model = query.model || effective('MODEL_NAME');
-  const outboundRaw = await runFlyai([...common, ...(destination ? ['--destination', destination] : []), ...dateArgs(query, 'dep')], model);
-  const outboundNormalized = normalize(outboundRaw);
+  const sortTypes = ['3', '4', '2', '8'];
+  const outboundSearches = await Promise.allSettled(sortTypes.map(sortType => runFlyai([...common, '--sort-type', sortType, ...(destination ? ['--destination', destination] : []), ...dateArgs(query, 'dep')], model)));
+  const successful = outboundSearches.filter(item => item.status === 'fulfilled').map(item => item.value);
+  if (!successful.length) throw outboundSearches[0]?.reason || new Error('航班查询没有返回结果');
+  const outboundNormalized = successful.flatMap(normalize);
   const outbound = outboundNormalized.filter(f => inTime(f.time, query.outTimeStart, query.outTimeEnd) && reasonableItinerary(f));
-  const optionLimit = destination ? 8 : 4;
-
   const groups = new Map();
   outbound.forEach(f => {
     if (!groups.has(f.code)) groups.set(f.code, []);
     groups.get(f.code).push(f);
   });
-  const destinations = [...groups.values()].slice(0, destination ? 1 : 8).map(flights => uniqueFlights(flights, optionLimit));
+  const destinations = [...groups.values()].sort((a, b) => Math.min(...a.map(item => item.fare)) - Math.min(...b.map(item => item.fare)) || Math.min(...a.map(item => item.duration)) - Math.min(...b.map(item => item.duration))).map(uniqueFlights);
   if (query.trip === 'oneway') {
     return destinations.flat().map(f => makeResult(f, null, query)).sort((a, b) => a.totalPrice - b.totalPrice).map((item, index) => ({ ...item, rank: index + 1 }));
   }
@@ -297,14 +369,30 @@ async function search(query) {
       const inboundArgs = ['--origin', outboundItem.code, '--destination', origin, '--sort-type', '3', ...dateArgs(query, 'back')];
       if (query.backTimeStart) inboundArgs.push('--dep-hour-start', String(Number(query.backTimeStart.slice(0, 2))));
       if (query.backTimeEnd) inboundArgs.push('--dep-hour-end', String(Number(query.backTimeEnd.slice(0, 2))));
-      const inboundOptions = uniqueFlights(normalize(await runFlyai(inboundArgs)).filter(f => inTime(f.time, query.backTimeStart, query.backTimeEnd) && reasonableItinerary(f)), optionLimit);
+      const inboundOptions = uniqueFlights(normalize(await runFlyai(inboundArgs)).filter(f => inTime(f.time, query.backTimeStart, query.backTimeEnd) && reasonableItinerary(f)));
       const combinations = [];
       for (const out of outboundOptions) for (const back of inboundOptions) {
         if (out.layoverMinutes + back.layoverMinutes <= 4 * 60) combinations.push(makeResult(out, back, query));
       }
-      results.push(...diverseItineraries(combinations, optionLimit));
+      results.push(...combinations);
   }
   return results.filter(Boolean).sort((a, b) => a.totalPrice - b.totalPrice).map((item, index) => ({ ...item, rank: index + 1 }));
+}
+
+async function search(query) {
+  validateTripDates(query);
+  const key = searchCacheKey(query);
+  const cached = searchCache.get(key);
+  if (cached?.expiresAt > Date.now()) return cached.results;
+  if (searchInflight.has(key)) return searchInflight.get(key);
+  const task = searchFresh(query).then(results => {
+    searchCache.set(key, { results, expiresAt: Date.now() + 30 * 60 * 1000 });
+    if (searchCache.size > 16) searchCache.delete(searchCache.keys().next().value);
+    return results;
+  });
+  searchInflight.set(key, task);
+  task.finally(() => searchInflight.delete(key)).catch(() => undefined);
+  return task;
 }
 function parseAiJson(content) {
   const clean = String(content || '').replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
@@ -362,7 +450,7 @@ function makeResult(outbound, inbound, query) {
   const flightMinutes = outbound.flightMinutes + (inbound?.flightMinutes || 0);
   const journeyMinutes = outbound.elapsedMinutes + (inbound?.elapsedMinutes || 0);
   const transferWaitMinutes = outbound.layoverMinutes + (inbound?.layoverMinutes || 0);
-  return { id, city: outbound.city, code: outbound.code, date: outbound.date, backDate: inbound?.date, outboundAirline: outbound.airline, inboundAirline: inbound?.airline || '', airline: inbound ? `${outbound.airline} / ${inbound.airline}` : outbound.airline, out: outbound.time, outArr: outbound.arrivalTime || '—', back: inbound?.time || '—', backArr: inbound?.arrivalTime || '—', duration: Number((flightMinutes / 60).toFixed(1)), journeyDuration: Number((journeyMinutes / 60).toFixed(1)), transferWait: Number((transferWaitMinutes / 60).toFixed(1)), direct: outbound.direct && (!inbound || inbound.direct), fare: outbound.fare + (inbound?.fare || 0), fees: outboundFee.amount + inboundFee.amount, feeSource: outboundFee.source === '接口' && inboundFee.source === '接口' ? '接口' : '预估', perPerson: Math.round(perPerson), totalPrice: Math.round(perPerson * people), jumpUrl: outbound.jumpUrl, verdict: inbound ? '去回程已配对' : '单程预算', note: `${people}人 · 票面 ¥${Math.round(outbound.fare + (inbound?.fare || 0))} + 费用 ¥${Math.round(outboundFee.amount + inboundFee.amount)}` };
+  return { id, city: outbound.city, code: outbound.code, date: outbound.date, backDate: inbound?.date, outboundAirline: outbound.airline, inboundAirline: inbound?.airline || '', airline: inbound ? `${outbound.airline} / ${inbound.airline}` : outbound.airline, out: outbound.time, outArr: outbound.arrivalTime || '—', back: inbound?.time || '—', backArr: inbound?.arrivalTime || '—', duration: Number((flightMinutes / 60).toFixed(1)), journeyDuration: Number((journeyMinutes / 60).toFixed(1)), transferWait: Number((transferWaitMinutes / 60).toFixed(1)), direct: outbound.direct && (!inbound || inbound.direct), fare: outbound.fare + (inbound?.fare || 0), fees: outboundFee.amount + inboundFee.amount, feeSource: outboundFee.source === '接口' && inboundFee.source === '接口' ? '接口' : '预估', perPerson: Math.round(perPerson), totalPrice: Math.round(perPerson * people), jumpUrl: outbound.jumpUrl };
 }
 
 const server = http.createServer(async (request, response) => {
@@ -389,11 +477,14 @@ const server = http.createServer(async (request, response) => {
     try { return send(response, 200, { models: await listModels(), configured: effective('MODEL_NAME') }); }
     catch (error) { return send(response, 502, { error: error.message, models: [] }); }
   }
+  if (request.url === '/api/weather' && request.method === 'POST') {
+    let body = ''; request.on('data', chunk => body += chunk); request.on('end', async () => { try { send(response, 200, await weatherForecast(JSON.parse(body))); } catch (error) { send(response, 502, { error: error.message, weather: {} }); } }); return;
+  }
   if (request.url === '/api/ai-rank' && request.method === 'POST') {
     let body = ''; request.on('data', chunk => body += chunk); request.on('end', async () => { try { send(response, 200, await aiRank(JSON.parse(body))); } catch (error) { send(response, 502, { error: error.message }); } }); return;
   }
   if (request.url === '/api/search' && request.method === 'POST') {
-    let body = ''; request.on('data', chunk => body += chunk); request.on('end', async () => { try { send(response, 200, { results: await search(JSON.parse(body)) }); } catch (error) { send(response, 502, { error: error.message }); } }); return;
+    let body = ''; request.on('data', chunk => body += chunk); request.on('end', async () => { try { send(response, 200, { results: await search(JSON.parse(body)) }); } catch (error) { send(response, error.statusCode || 502, { error: error.message }); } }); return;
   }
   if ((request.url === '/' || request.url === '/index.html') && request.method === 'GET') {
     response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
