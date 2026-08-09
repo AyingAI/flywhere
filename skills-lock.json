@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "flyai": {
+      "source": "alibaba-flyai/flyai-skill",
+      "sourceType": "github",
+      "skillPath": "skills/flyai/SKILL.md",
+      "computedHash": "bc7b38dd700963f5cbf86632b46ed71d1a3f01b9a39bedcb073f25d7680f139c"
+    }
+  }
+}

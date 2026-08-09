@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="飞哪里 Radar：固定日期，从广州出发，按含税往返总价寻找值得去的目的地。" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%231e2421'/%3E%3Cpath d='M10 21 22 9m-8 0h8v8' stroke='%23fffdf8' stroke-width='2.2' fill='none'/%3E%3C/svg%3E" />
+  <title>飞哪里 Radar · 固定日期按价格找目的地</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap');
+    :root { --ink:#1e2421; --muted:#6f7772; --paper:#f3f1eb; --surface:#fffdf8; --surface-2:#f7f5ef; --line:#dcded8; --line-dark:#b9beb9; --accent:#e45f36; --accent-soft:#f9e7df; --green:#37715a; --green-soft:#e5eee9; --mono:'DM Sans',sans-serif; --map-height:clamp(340px,calc(100dvh - 330px),760px); }
+    * { box-sizing:border-box; }
+    [hidden] { display:none!important; }
+    html { scroll-behavior:smooth; }
+    body { margin:0; color:var(--ink); background:var(--paper); font-family:'Noto Sans SC',sans-serif; }
+    body:before { content:""; position:fixed; inset:0; pointer-events:none; opacity:.18; background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.045'/%3E%3C/svg%3E"); z-index:10; }
+    button,input,select { font:inherit; }
+    button { color:inherit; }
+    .shell { width:min(1500px,calc(100% - 48px)); margin:auto; }
+    header { height:68px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); }
+    .brand { display:flex; align-items:center; gap:10px; font-weight:800; letter-spacing:-.035em; font-size:17px; }
+    .brand-mark { width:29px; height:29px; display:grid; place-items:center; border-radius:50%; background:var(--ink); color:var(--surface); font:700 11px var(--mono); }
+    .brand-sub { color:var(--muted); font-weight:400; }
+    .header-actions { display:flex; align-items:center; gap:10px; }
+    .runtime-state { display:flex; align-items:center; gap:7px; color:var(--muted); font-size:11px; }
+    .connection-dot { width:7px; height:7px; border-radius:50%; background:#adb2ae; }
+    .connection-dot.ready { background:var(--green); box-shadow:0 0 0 3px #37715a1c; }
+    .settings-trigger,.history-trigger { height:36px; border:1px solid var(--line); background:var(--surface); border-radius:9px; padding:0 13px; cursor:pointer; font-size:12px; font-weight:700; transition:.2s ease; }
+    .settings-trigger:hover,.history-trigger:hover { border-color:var(--ink); transform:translateY(-1px); }
+    .history-trigger { display:inline-flex; align-items:center; gap:7px; }
+    .history-count { min-width:16px; height:16px; display:grid; place-items:center; border-radius:99px; background:var(--accent-soft); color:var(--accent); font:700 9px var(--mono); }
+
+    main { padding:24px 0 48px; }
+    .search-deck { border:1px solid var(--line); background:var(--surface); border-radius:18px; padding:22px; box-shadow:0 16px 50px #26352e0b; }
+    .search-intro { display:flex; align-items:end; justify-content:space-between; gap:24px; margin-bottom:17px; }
+    .eyebrow { color:var(--accent); font:700 10px var(--mono); letter-spacing:.14em; text-transform:uppercase; }
+    .search-intro h1 { margin:5px 0 0; font-size:25px; letter-spacing:-.055em; line-height:1.15; }
+    .search-intro p { margin:0; color:var(--muted); font-size:11px; }
+    .search-grid { display:grid; grid-template-columns:1.05fr 1.05fr 1.35fr 1.35fr .72fr auto; gap:8px; align-items:end; }
+    .search-field { min-width:0; }
+    .search-field label,.field label,.field-label { display:block; font-weight:700; font-size:10px; margin:0 0 6px 3px; color:#4e5651; }
+    .control { width:100%; height:48px; border:1px solid var(--line); background:var(--surface-2); color:var(--ink); border-radius:11px; padding:0 12px; outline:none; font-size:12px; }
+    .control:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+    .route-control { position:relative; }
+    .route-control .control { padding-left:39px; }
+    .route-code { position:absolute; left:11px; bottom:14px; width:24px; height:20px; display:grid; place-items:center; border-right:1px solid var(--line); color:var(--green); font:700 9px var(--mono); z-index:1; }
+    .date-pair { display:grid; grid-template-columns:1fr 1fr; gap:5px; }
+    .date-pair .control { padding:0 7px; font-size:11px; }
+    .segment-small { height:48px; display:grid; grid-template-columns:1fr 1fr; gap:3px; padding:3px; background:#ecebe5; border:1px solid var(--line); border-radius:11px; }
+    .segment-small button { border:0; background:transparent; border-radius:8px; cursor:pointer; font-size:11px; color:var(--muted); padding:0 8px; }
+    .segment-small button.active { background:var(--surface); color:var(--ink); font-weight:700; box-shadow:0 2px 8px #20282012; }
+    .search-button { height:48px; border:0; background:var(--ink); color:var(--surface); border-radius:11px; padding:0 24px; cursor:pointer; font-weight:700; font-size:12px; white-space:nowrap; transition:.22s ease; }
+    .search-button:hover { background:var(--accent); transform:translateY(-1px); }
+    .search-button.loading { opacity:.58; pointer-events:none; }
+    .search-subrow { display:flex; align-items:center; justify-content:space-between; gap:14px; margin-top:13px; padding-top:13px; border-top:1px solid var(--line); }
+    .query-summary { display:flex; align-items:center; gap:7px; flex-wrap:wrap; min-height:29px; }
+    .summary-chip { border:1px solid var(--line); border-radius:99px; padding:6px 9px; color:#59615c; background:var(--surface-2); font-size:10px; }
+    .more-options { position:relative; }
+    .more-options summary { list-style:none; cursor:pointer; border:1px solid var(--line); border-radius:8px; padding:7px 11px; font-size:10px; font-weight:700; background:var(--surface); }
+    .more-options summary::-webkit-details-marker { display:none; }
+    .more-panel { position:absolute; right:0; top:38px; z-index:6; width:390px; padding:17px; border:1px solid var(--line); border-radius:13px; background:var(--surface); box-shadow:0 18px 60px #1e242120; }
+    .time-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .time-row { display:grid; grid-template-columns:1fr auto 1fr; gap:5px; align-items:center; }
+    .time-row .control { height:39px; padding:0 7px; font-size:11px; }
+    .dash { color:var(--muted); }
+    .preference-row { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-top:14px; }
+    .check { min-height:41px; border:1px solid var(--line); border-radius:9px; display:flex; align-items:center; gap:7px; padding:0 9px; font-size:10px; color:#555e58; cursor:pointer; }
+    input[type=checkbox] { accent-color:var(--green); }
+    .preference-row select { height:41px; border:1px solid var(--line); border-radius:9px; background:var(--surface-2); padding:0 8px; font-size:10px; }
+
+    .explore { margin-top:18px; min-height:0; border:1px solid var(--line); background:var(--surface); border-radius:18px; overflow:hidden; box-shadow:0 16px 50px #26352e08; }
+    .empty-state,.error-state,.loading-state { min-height:var(--map-height); display:grid; place-items:center; text-align:center; padding:40px; position:relative; overflow:hidden; }
+    .empty-state:before { content:""; position:absolute; width:440px; height:440px; border:1px solid #dde0da; border-radius:50%; opacity:.45; box-shadow:0 0 0 70px #f7f5ef,0 0 0 71px #dde0da,0 0 0 140px #faf8f3; }
+    .empty-content { position:relative; z-index:1; width:min(450px,100%); }
+    .empty-index { width:44px; height:44px; display:grid; place-items:center; margin:0 auto 18px; border-radius:50%; background:var(--ink); color:var(--surface); font:700 12px var(--mono); }
+    .empty-content h2,.error-state h2 { margin:0 0 8px; font-size:24px; letter-spacing:-.055em; }
+    .empty-content p,.error-state p { margin:0; color:var(--muted); font-size:12px; line-height:1.8; }
+    .loading-bars { width:240px; display:grid; gap:8px; margin:auto; }
+    .loading-bars i { display:block; height:7px; border-radius:9px; background:linear-gradient(90deg,#ecebe5 20%,#dddcd4 50%,#ecebe5 80%); background-size:220% 100%; animation:shimmer 1.2s infinite; }
+    .loading-bars i:nth-child(2) { width:78%; }
+    .loading-bars i:nth-child(3) { width:58%; }
+    @keyframes shimmer { to { background-position:-220% 0; } }
+    .retry-button { border:1px solid var(--ink); border-radius:9px; background:var(--ink); color:var(--surface); padding:10px 16px; margin-top:17px; cursor:pointer; font-size:11px; font-weight:700; }
+
+    .results-shell { min-height:0; }
+    .results-top { min-height:74px; padding:16px 20px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; gap:18px; }
+    .results-title { display:flex; align-items:center; gap:12px; }
+    .results-title h2 { margin:0; font-size:19px; letter-spacing:-.045em; }
+    .results-title p { margin:3px 0 0; color:var(--muted); font-size:10px; }
+    .results-count { min-width:34px; height:34px; display:grid; place-items:center; border-radius:50%; background:var(--accent-soft); color:var(--accent); font:700 11px var(--mono); }
+    .results-actions { display:flex; gap:7px; align-items:center; }
+    .mini-select,.tool-button { height:34px; border:1px solid var(--line); border-radius:8px; background:var(--surface-2); padding:0 10px; font-size:10px; }
+    .tool-button { cursor:pointer; font-weight:700; }
+    .tool-button.ai { color:var(--accent); border-color:#efb7a5; background:#fff8f5; }
+    .view-switch { display:grid; grid-template-columns:1fr 1fr; background:#ecebe5; border-radius:9px; padding:3px; gap:3px; }
+    .view-switch button { height:28px; min-width:52px; border:0; border-radius:7px; background:transparent; color:var(--muted); font-size:10px; cursor:pointer; }
+    .view-switch button.active { background:var(--surface); color:var(--ink); font-weight:700; box-shadow:0 1px 5px #1e242112; }
+    .filters-bar { padding:10px 20px; display:flex; align-items:center; justify-content:space-between; gap:14px; border-bottom:1px solid var(--line); background:#faf9f5; }
+    .filters { display:flex; gap:6px; flex-wrap:wrap; }
+    .passenger-filter { display:flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:99px; padding:0 4px 0 10px; background:var(--surface); color:var(--muted); font-size:10px; }
+    .passenger-filter select { border:0; background:transparent; height:29px; color:var(--ink); font-weight:700; font-size:10px; outline:0; }
+    .filter-select { border:1px solid var(--line); background:var(--surface); border-radius:99px; height:29px; padding:0 10px; color:#515a54; font-size:10px; }
+    .ai-note { color:var(--green); font-size:10px; text-align:right; }
+    .price-help { position:relative; border:0; border-bottom:1px dashed var(--muted); background:transparent; color:var(--muted); padding:0 0 2px; cursor:help; font-size:10px; }
+    .price-help span { display:none; position:absolute; z-index:8; right:0; top:25px; width:320px; padding:12px 13px; border:1px solid var(--line); border-radius:10px; background:var(--ink); color:var(--surface); text-align:left; line-height:1.7; box-shadow:0 12px 35px #1e242124; }
+    .price-help:hover span,.price-help:focus span { display:block; }
+
+    .map-layout { display:grid; grid-template-columns:minmax(0,1fr) 340px; height:var(--map-height); }
+    .map-stage { position:relative; min-height:0; height:100%; background:#f5f5ef; border-right:1px solid var(--line); }
+    #flightMap { position:absolute; inset:0; }
+    .map-legend { position:absolute; left:18px; bottom:16px; z-index:2; border:1px solid var(--line); background:#fffdf8e8; backdrop-filter:blur(8px); border-radius:9px; padding:8px 10px; color:var(--muted); font-size:9px; }
+    .map-error { position:absolute; inset:0; display:grid; place-items:center; color:var(--muted); font-size:12px; }
+    .map-side { height:100%; padding:16px; overflow:auto; }
+    .map-side-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:11px; }
+    .map-side-head strong { font-size:12px; }
+    .map-side-head span { color:var(--muted); font-size:9px; }
+    .map-card { width:100%; border:1px solid var(--line); background:var(--surface); border-radius:12px; padding:13px; margin-bottom:8px; cursor:pointer; text-align:left; transition:.18s ease; }
+    .map-card:hover,.map-card.selected { border-color:var(--green); background:#f3f7f4; transform:translateX(-2px); }
+    .map-card-top { display:flex; justify-content:space-between; gap:10px; align-items:start; }
+    .map-card-city { display:flex; align-items:center; gap:9px; }
+    .code-badge { width:34px; height:34px; display:grid; place-items:center; border-radius:9px; background:var(--ink); color:var(--surface); font:700 9px var(--mono); }
+    .map-card-city strong { display:block; font-size:13px; }
+    .map-card-city small { color:var(--muted); font-size:9px; }
+    .map-card-price { color:var(--accent); font:700 17px var(--mono); white-space:nowrap; }
+    .map-card-meta { display:flex; justify-content:space-between; gap:8px; margin-top:10px; padding-top:9px; border-top:1px solid var(--line); color:#56605a; font-size:9px; }
+
+    .list-view { padding:0 20px 18px; }
+    .list-labels { display:grid; grid-template-columns:1.05fr 1.3fr .9fr 160px; gap:18px; padding:12px 14px 8px; color:var(--muted); font-size:9px; }
+    .list-labels span:last-child { text-align:right; }
+    .flight-card { display:grid; grid-template-columns:1.05fr 1.3fr .9fr 160px; gap:18px; align-items:center; border:1px solid var(--line); background:var(--surface); border-radius:13px; padding:15px 14px; margin-bottom:8px; transition:.2s ease; animation:rise .45s both; animation-delay:calc(var(--i)*45ms); }
+    .flight-card:hover { border-color:#b8bdb7; box-shadow:0 10px 28px #2432290e; transform:translateY(-1px); }
+    @keyframes rise { from { opacity:0; transform:translateY(8px); } }
+    .city-cell { display:flex; align-items:center; gap:11px; }
+    .city-cell strong { display:block; font-size:15px; letter-spacing:-.03em; }
+    .city-cell small { color:var(--muted); font-size:9px; }
+    .flight-cell strong { display:block; color:var(--green); font-size:11px; margin-bottom:5px; }
+    .flight-cell div { font:600 11px var(--mono); }
+    .flight-cell small,.reason-cell small { display:block; color:var(--muted); font-size:9px; margin-top:4px; }
+    .reason-cell { font-size:10px; line-height:1.55; }
+    .reason-cell b { display:block; margin-bottom:2px; }
+    .price-cell { text-align:right; }
+    .price-cell strong { display:block; color:var(--accent); font:700 21px var(--mono); }
+    .price-cell small { display:block; color:var(--green); font-size:9px; margin:2px 0 8px; }
+    .decision-action { display:inline-flex; justify-content:center; align-items:center; min-width:112px; height:31px; border:1px solid var(--ink); border-radius:8px; background:var(--ink); color:var(--surface); font-size:10px; font-weight:700; cursor:pointer; }
+    .decision-action:hover { background:var(--accent); border-color:var(--accent); }
+    .no-filter-results { padding:70px 20px; text-align:center; color:var(--muted); font-size:12px; }
+
+    footer { padding:24px 0 35px; color:var(--muted); font-size:10px; display:flex; justify-content:space-between; gap:20px; }
+
+    body.settings-open { overflow:hidden; }
+    .settings-layer { position:fixed; inset:0; z-index:30; display:flex; justify-content:flex-end; background:#1e242147; backdrop-filter:blur(4px); }
+    .settings-panel { width:min(520px,100%); height:100%; overflow:auto; background:var(--surface); border-left:1px solid var(--line); padding:28px 32px 24px; box-shadow:-24px 0 70px #1e242118; animation:slideIn .3s cubic-bezier(.32,.72,0,1); }
+    @keyframes slideIn { from { transform:translateX(30px); opacity:.5; } }
+    .settings-head { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; padding-bottom:22px; border-bottom:2px solid var(--ink); }
+    .settings-head h2 { margin:4px 0; font-size:25px; letter-spacing:-.055em; }
+    .settings-head p { margin:0; color:var(--muted); font-size:11px; }
+    .close-settings { border:1px solid var(--line); background:transparent; width:34px; height:34px; border-radius:50%; cursor:pointer; font-size:18px; }
+    .settings-section { padding:22px 0; border-bottom:1px solid var(--line); }
+    .section-kicker { display:flex; justify-content:space-between; align-items:center; margin-bottom:13px; }
+    .section-kicker strong { font-size:13px; }
+    .status-tag { color:var(--green); background:var(--green-soft); border-radius:99px; padding:4px 8px; font-size:9px; }
+    .status-tag.off { color:var(--muted); background:#ecebe6; }
+    .field { margin-bottom:15px; }
+    .input,.settings-panel select { width:100%; height:44px; border:1px solid var(--line); border-radius:10px; background:var(--surface-2); padding:0 11px; outline:none; font-size:11px; }
+    .hint,.model-status { color:var(--muted); font-size:9px; line-height:1.6; margin-top:5px; }
+    .model-status.error { color:#aa4d35; }
+    .secret-wrap { display:grid; grid-template-columns:1fr auto; gap:7px; }
+    .clear-secret { border:1px solid var(--line); background:transparent; border-radius:10px; padding:0 11px; color:var(--muted); cursor:pointer; font-size:10px; }
+    .clear-secret.armed { color:#a54d35; border-color:#c98370; background:#f8e9e4; }
+    .mode-switch { display:grid; grid-template-columns:1fr 1fr; gap:4px; padding:4px; border-radius:11px; background:#ebe9e2; }
+    .mode-switch button { border:0; background:transparent; border-radius:8px; padding:10px; color:var(--muted); cursor:pointer; font-size:11px; }
+    .mode-switch button.active { background:var(--surface); color:var(--ink); font-weight:700; box-shadow:0 2px 8px #20232212; }
+    .settings-fields { margin-top:17px; }
+    .cli-list { display:grid; gap:8px; margin-top:13px; }
+    .cli-card { width:100%; border:1px solid var(--line); background:transparent; border-radius:11px; padding:11px 12px; display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center; text-align:left; cursor:pointer; }
+    .cli-card.selected { border-color:var(--green); background:#f4f7f3; }
+    .cli-card.unavailable { opacity:.58; cursor:not-allowed; }
+    .cli-icon { width:29px; height:29px; border-radius:8px; background:var(--ink); color:var(--surface); display:grid; place-items:center; font:700 8px var(--mono); text-transform:uppercase; }
+    .cli-name { display:block; font-size:11px; font-weight:700; }
+    .cli-detail { display:block; color:var(--muted); font-size:9px; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:270px; }
+    .cli-state { width:7px; height:7px; border-radius:50%; background:var(--green); }
+    .cli-copy,.refresh-cli { border:0; background:transparent; color:var(--accent); cursor:pointer; font-size:9px; padding:4px; }
+    .settings-message { min-height:20px; padding-top:10px; color:var(--muted); font-size:10px; }
+    .settings-actions { position:sticky; bottom:-24px; background:linear-gradient(transparent,var(--surface) 22%); padding:28px 0 0; display:grid; grid-template-columns:1fr 2fr; gap:8px; }
+    .settings-actions button { height:43px; border-radius:9px; cursor:pointer; font-size:11px; font-weight:700; }
+    .settings-cancel { border:1px solid var(--line); background:var(--surface); }
+    .settings-save { border:0; background:var(--ink); color:var(--surface); }
+    .options-panel { width:min(640px,100%); height:100%; overflow:auto; background:var(--surface); border-left:1px solid var(--line); padding:28px 32px 24px; box-shadow:-24px 0 70px #1e242118; animation:slideIn .3s cubic-bezier(.32,.72,0,1); }
+    .history-panel { width:min(520px,100%); height:100%; overflow:auto; background:var(--surface); border-left:1px solid var(--line); padding:28px 32px 24px; box-shadow:-24px 0 70px #1e242118; animation:slideIn .3s cubic-bezier(.32,.72,0,1); }
+    .history-intro { margin:18px 0 12px; padding:13px 14px; border:1px solid #c9d6cf; border-radius:12px; background:var(--green-soft); color:#365346; font-size:11px; line-height:1.65; }
+    .history-toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; margin:14px 0 10px; }
+    .history-toolbar span { color:var(--muted); font-size:10px; }
+    .history-clear { border:0; border-bottom:1px solid currentColor; background:transparent; color:var(--accent); padding:2px 0; cursor:pointer; font-size:10px; }
+    .history-list { display:grid; gap:9px; }
+    .history-record { border:1px solid var(--line); border-radius:13px; padding:14px; background:var(--surface); }
+    .history-record-top { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; }
+    .history-route { margin:0; font-size:14px; letter-spacing:-.035em; }
+    .history-meta { margin:5px 0 0; color:var(--muted); font-size:10px; line-height:1.55; }
+    .history-time { color:var(--muted); font:500 10px var(--mono); white-space:nowrap; }
+    .history-record-actions { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; padding-top:11px; border-top:1px solid var(--line); }
+    .history-record-actions span { color:var(--green); font-size:10px; }
+    .history-actions { display:flex; gap:7px; }
+    .history-restore,.history-delete { height:29px; border-radius:8px; padding:0 10px; cursor:pointer; font-size:10px; font-weight:700; }
+    .history-restore { border:1px solid var(--ink); background:var(--ink); color:var(--surface); }
+    .history-delete { border:1px solid var(--line); background:transparent; color:var(--muted); }
+    .history-empty { padding:60px 18px; border:1px dashed var(--line-dark); border-radius:13px; color:var(--muted); text-align:center; font-size:11px; line-height:1.7; }
+    .options-intro { margin:18px 0; padding:14px; border:1px solid #c9d6cf; border-radius:12px; background:var(--green-soft); color:#365346; font-size:11px; line-height:1.6; }
+    .option-groups { display:grid; gap:10px; }
+    .option-group { border:1px solid var(--line); border-radius:13px; overflow:hidden; }
+    .option-group-head { display:flex; justify-content:space-between; align-items:center; padding:12px 14px; background:var(--surface-2); border-bottom:1px solid var(--line); }
+    .option-group-head strong { color:var(--green); font-size:12px; }
+    .option-group-head span { color:var(--muted); font-size:9px; }
+    .option-row { display:grid; grid-template-columns:1fr auto; gap:16px; padding:13px 14px; align-items:center; border-bottom:1px solid var(--line); }
+    .option-row:last-child { border-bottom:0; }
+    .option-row strong { display:block; font:700 11px var(--mono); }
+    .option-row small { display:block; margin-top:4px; color:var(--muted); font-size:9px; }
+    .option-price { color:var(--accent); font:700 17px var(--mono); text-align:right; }
+    .option-price small { color:var(--green); font:400 9px var(--body); white-space:nowrap; }
+
+    @media(max-width:1180px) { .search-grid { grid-template-columns:1fr 1fr 1.2fr 1.2fr .75fr auto; } .passenger-field { display:none; } .map-layout { grid-template-columns:minmax(0,1fr) 300px; } }
+    @media(max-width:900px) { .shell { width:min(100% - 28px,1500px); } .search-grid { grid-template-columns:1fr 1fr; } .search-button { grid-column:1/-1; } .passenger-field { display:block; } .map-layout { grid-template-columns:1fr; height:auto; } .map-stage { height:clamp(330px,58dvh,520px); border-right:0; border-bottom:1px solid var(--line); } .map-side { display:grid; grid-template-columns:1fr 1fr; gap:8px; height:auto; max-height:none; } .map-side-head { grid-column:1/-1; } .map-card { margin:0; } .list-labels { display:none; } .flight-card { grid-template-columns:1fr 1fr; } .price-cell { text-align:left; } }
+    @media(max-width:600px) { .runtime-state { display:none; } .history-trigger { padding:0 10px; } .search-intro { display:block; } .search-intro p { margin-top:7px; } .search-grid { grid-template-columns:1fr; } .search-button { grid-column:auto; } .search-subrow { align-items:stretch; flex-direction:column; } .more-options { width:100%; } .more-options summary { text-align:center; } .more-panel { position:fixed; left:14px; right:14px; top:auto; bottom:14px; width:auto; } .time-grid,.preference-row { grid-template-columns:1fr; } .results-top { align-items:flex-start; flex-direction:column; } .results-actions { width:100%; flex-wrap:wrap; } .filters-bar { align-items:flex-start; flex-direction:column; } .ai-note { text-align:left; } .map-side { grid-template-columns:1fr; } .flight-card { grid-template-columns:1fr; } .settings-panel,.options-panel,.history-panel { padding:23px 20px 18px; } footer { display:block; } footer span { display:block; margin-top:6px; } }
+    @media(prefers-reduced-motion:reduce) { *,*:before,*:after { animation:none!important; transition:none!important; scroll-behavior:auto!important; } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div class="brand"><span class="brand-mark">R</span>飞哪里 <span class="brand-sub">Radar</span></div>
+      <div class="header-actions"><div class="runtime-state"><i class="connection-dot" id="connectionDot"></i><span id="connectionLabel">检查配置…</span></div><button class="history-trigger" id="openHistory" type="button">查询记录 <span class="history-count" id="historyCount" hidden>0</span></button><button class="settings-trigger" id="openSettings">运行设置</button></div>
+    </header>
+    <main>
+      <section class="search-deck" aria-label="机票查询">
+        <div class="search-intro"><div><div class="eyebrow">Price-led flight discovery</div><h1>根据价格，决定飞哪里</h1></div><p>固定日期后，按全体旅客的往返含税总价排序目的地。</p></div>
+        <div class="search-grid">
+          <div class="search-field route-control"><label for="origin">从哪里出发</label><span class="route-code" id="originCode">CAN</span><select class="control" id="origin"><option>广州 · CAN · 白云</option><option>深圳 · SZX · 宝安</option><option>上海 · SHA · 虹桥</option><option>北京 · BJS · 首都 / 大兴</option></select></div>
+          <div class="search-field route-control"><label for="destination">飞到哪里</label><span class="route-code">TO</span><select class="control" id="destination"><option value="all" selected>全国探索 · 不限目的地</option><option value="海口">海口</option><option value="昆明">昆明</option><option value="成都">成都</option><option value="厦门">厦门</option><option value="西安">西安</option><option value="三亚">三亚</option></select></div>
+          <div class="search-field"><label for="outDate">出发日期</label><input class="control" type="date" id="outDate" value="2026-09-18"></div>
+          <div class="search-field" id="returnField"><label for="backDate">回程日期</label><input class="control" type="date" id="backDate" value="2026-09-22"></div>
+          <div class="search-field"><span class="field-label">行程</span><div class="segment-small"><button class="active" data-trip="round" type="button">往返</button><button data-trip="oneway" type="button">单程</button></div></div>
+          <button class="search-button" id="scan" type="button">搜索低价目的地</button>
+        </div>
+        <div class="search-subrow">
+          <div class="query-summary" id="querySummary"></div>
+          <details class="more-options" id="moreOptions"><summary>时间与偏好</summary><div class="more-panel">
+            <div class="time-grid"><div><span class="field-label">去程时间</span><div class="time-row"><input class="control" type="time" id="outTimeStart" value="08:00"><span class="dash">—</span><input class="control" type="time" id="outTimeEnd" value="13:00"></div></div><div id="returnTimeField"><span class="field-label">回程时间</span><div class="time-row"><input class="control" type="time" id="backTimeStart" value="13:00"><span class="dash">—</span><input class="control" type="time" id="backTimeEnd" value="19:00"></div></div></div>
+            <div class="preference-row"><label class="check"><input id="direct" type="checkbox" checked>直飞优先</label><label class="check"><input id="noRedeye" type="checkbox" checked>避开红眼</label><select id="duration" aria-label="最长飞行时长"><option value="2">最长 2 小时</option><option value="3">最长 3 小时</option><option value="4" selected>最长 4 小时</option><option value="5">最长 5 小时</option><option value="6">最长 6 小时</option><option value="7">最长 7 小时</option><option value="8">最长 8 小时</option><option value="10">最长 10 小时</option><option value="12">最长 12 小时</option><option value="99">不限时长</option></select></div>
+          </div></details>
+        </div>
+      </section>
+
+      <section class="explore" id="explore" aria-live="polite">
+        <div class="empty-state" id="emptyState"><div class="empty-content"><div class="empty-index">01</div><h2>先搜索，再比较目的地</h2><p>这里不会预置虚构结果。设置日期与人数后开始搜索，真实航班会以地图和列表两种方式呈现。</p></div></div>
+        <div class="loading-state" id="loadingState" hidden><div><div class="loading-bars"><i></i><i></i><i></i></div><p style="color:var(--muted);font-size:11px;margin-top:18px">正在匹配去程与回程，计算全员含税总价…</p></div></div>
+        <div class="error-state" id="errorState" hidden><div><div class="empty-index">!</div><h2>这次查询没有完成</h2><p id="errorMessage"></p><button class="retry-button" id="retrySearch" type="button">重新搜索</button></div></div>
+        <div class="results-shell" id="resultsState" hidden>
+          <div class="results-top"><div class="results-title"><span class="results-count" id="count">0</span><div><h2 id="resultTitle">发现值得去的目的地</h2><p id="resultSubtitle">已按全员含税总价排序</p></div></div><div class="results-actions"><div class="view-switch"><button class="active" data-view="map" type="button">地图</button><button data-view="list" type="button">列表</button></div><select class="mini-select" id="sort"><option value="price">价格最低</option><option value="duration">飞行更短</option><option value="direct">直飞优先</option></select><button class="tool-button ai" id="aiRank" type="button">AI 帮我选</button></div></div>
+          <div class="filters-bar"><div class="filters"><label class="passenger-filter" for="passengers">人数 <select id="passengers" aria-label="人数，本地重算价格"><option value="1" selected>1 位成人</option><option value="2">2 位成人</option><option value="3">3 位成人</option><option value="4">4 位成人</option><option value="5">5 位成人</option><option value="6">6 位成人</option></select></label><select class="filter-select" id="airlineFilter"><option value="all">全部航司</option></select><select class="filter-select" id="directFilter"><option value="all">直飞与中转</option><option value="direct">只看直飞</option><option value="transfer">只看中转</option></select><select class="filter-select" id="durationFilter"><option value="all">全部时长</option><option value="2">≤ 2 小时</option><option value="3">≤ 3 小时</option><option value="4">≤ 4 小时</option><option value="5">≤ 5 小时</option><option value="6">≤ 6 小时</option><option value="8">≤ 8 小时</option><option value="10">≤ 10 小时</option><option value="12">≤ 12 小时</option></select></div><div style="display:flex;align-items:center;gap:12px"><span class="ai-note" id="aiNote"></span><button class="price-help" type="button">价格说明<span id="priceExplanation"></span></button></div></div>
+          <div class="map-layout" id="mapView"><div class="map-stage"><div id="flightMap"></div><div class="map-legend" id="mapLegend">每个城市显示最低组合价 · 点击查看航司选择</div><div class="map-error" id="mapError" hidden></div></div><aside class="map-side"><div class="map-side-head"><strong>目的地速览</strong><span id="mapSummaryCount">按最低价</span></div><div id="mapCards" style="display:contents"></div></aside></div>
+          <div class="list-view" id="listView" hidden><div class="list-labels"><span>目的地</span><span>航班与时间</span><span>推荐理由</span><span>全员总价</span></div><div id="resultList"></div></div>
+        </div>
+      </section>
+    </main>
+    <footer><span>飞哪里 Radar / 真实航班反向探索</span><span>最终价格与余票以飞猪下单页为准</span></footer>
+  </div>
+
+  <div class="settings-layer" id="settingsLayer" hidden>
+    <form class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" onsubmit="return false">
+      <div class="settings-head"><div><div class="eyebrow">Local runtime</div><h2 id="settingsTitle">运行设置</h2><p>密钥只保存在这台设备，不会返回到浏览器。</p></div><button class="close-settings" id="closeSettings" aria-label="关闭设置">×</button></div>
+      <section class="settings-section"><div class="section-kicker"><strong>飞猪数据能力</strong><span class="status-tag off" id="flyaiStatus">检查中</span></div><div class="field"><label for="flyaiApiKey">飞猪 API Key</label><div class="secret-wrap"><input class="input" type="password" id="flyaiApiKey" autocomplete="off" placeholder="留空则保留已保存的 Key"><button class="clear-secret" id="clearFlyaiKey" type="button">清除</button></div><div class="hint">用于 flyai CLI 查询真实航班；保存在本地 .flymap-config.json。</div></div></section>
+      <section class="settings-section"><div class="section-kicker"><strong>AI 能力</strong><span class="status-tag off" id="aiStatus">未配置</span></div><div class="mode-switch"><button class="active" data-ai-mode="api" type="button">API Key</button><button data-ai-mode="cli" type="button">本地 CLI 授权</button></div>
+        <div class="settings-fields" id="apiSettings"><div class="field"><label for="aiBaseUrl">接口地址</label><input class="input" id="aiBaseUrl" type="url" placeholder="https://api.openai.com"></div><div class="field"><label for="aiApiKey">AI API Key</label><div class="secret-wrap"><input class="input" type="password" id="aiApiKey" autocomplete="off" placeholder="留空则保留已保存的 Key"><button class="clear-secret" id="clearAiKey" type="button">清除</button></div></div><div class="field"><label for="model">AI 模型</label><select id="model" disabled><option value="">保存 Key 后读取模型列表</option></select><div class="model-status" id="modelStatus">从 AI 接口读取可用模型</div></div></div>
+        <div class="settings-fields" id="cliSettings" hidden><div class="section-kicker"><span class="hint">选择已授权的本地 AI CLI</span><button class="refresh-cli" id="refreshCli" type="button">重新检测</button></div><div class="cli-list" id="cliList"></div><div class="field" style="margin-top:17px"><label for="cliModel">模型（可选）</label><input class="input" id="cliModel" list="cliModelOptions" placeholder="留空使用 CLI 默认模型"><datalist id="cliModelOptions"><option value="gpt-5.4"><option value="claude-sonnet-4-6"><option value="gemini-2.5-pro"></datalist><div class="hint">不确定时请留空，CLI 会使用当前账户的默认模型。</div></div></div>
+      </section>
+      <div class="settings-message" id="settingsMessage"></div><div class="settings-actions"><button class="settings-cancel" id="cancelSettings" type="button">取消</button><button class="settings-save" id="saveSettings" type="button">保存到本机</button></div>
+    </form>
+  </div>
+
+  <div class="settings-layer" id="optionsLayer" hidden>
+    <aside class="options-panel" role="dialog" aria-modal="true" aria-labelledby="optionsTitle">
+      <div class="settings-head"><div><div class="eyebrow">Flight choices</div><h2 id="optionsTitle">目的地可选航司</h2><p id="optionsSubtitle">对比航司、时刻与全员总价，再决定要不要去。</p></div><button class="close-settings" id="closeOptions" aria-label="关闭航司选择">×</button></div>
+      <div id="optionsContent"></div>
+    </aside>
+  </div>
+
+  <div class="settings-layer" id="historyLayer" hidden>
+    <aside class="history-panel" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
+      <div class="settings-head"><div><div class="eyebrow">Saved searches</div><h2 id="historyTitle">查询记录</h2><p>保存在当前设备。恢复记录不会重新请求飞猪。</p></div><button class="close-settings" id="closeHistory" aria-label="关闭查询记录">×</button></div>
+      <div class="history-intro">记录保留查询条件、航班组合与当时的本地筛选。价格是保存时的历史快照，需实时价格时请重新搜索。</div>
+      <div class="history-toolbar"><span id="historySummary">暂无已保存查询</span><button class="history-clear" id="clearHistory" type="button" hidden>清空记录</button></div>
+      <div class="history-list" id="historyList"></div>
+    </aside>
+  </div>
+
+  <script src="/vendor/echarts.min.js"></script>
+  <script>
+    const $=id=>document.getElementById(id);
+    document.documentElement.dataset.mapRuntime=window.echarts?'ready':'missing';
+    const esc=value=>String(value??'').replace(/[&<>'"]/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
+    const safeUrl=value=>{ try { const url=new URL(value,location.origin); return ['http:','https:'].includes(url.protocol)?url.href:'#'; } catch { return '#'; } };
+    let trip='round',liveResults=[],hasSearched=false,searchLoading=false,searchError='',aiReasons={},currentView='map',mapChart=null,mapSelectedCode='',openedDestinationCode='',settingsState=null,editingAiMode='api',selectedCli='codex',clearAiKey=false,clearFlyaiKey=false,historyRestoredAt='';
+    let chinaMapPromise=null;
+    const HISTORY_KEY='flymap.query-history.v1',HISTORY_LIMIT=12;
+    const airportCoords={CAN:[113.3,23.39],SZX:[113.81,22.64],BJS:[116.4,39.9],PEK:[116.6,40.08],PKX:[116.41,39.51],SHA:[121.34,31.2],PVG:[121.8,31.14],HAK:[110.46,19.94],KMG:[102.93,25.1],CTU:[103.95,30.58],TFU:[104.44,30.31],XMN:[118.13,24.54],XIY:[108.75,34.45],CSX:[113.22,28.19],SYX:[109.41,18.3],CKG:[106.64,29.72],WUH:[114.21,30.78],HGH:[120.43,30.23],NKG:[118.86,31.74],TAO:[120.37,36.27],DLC:[121.54,38.97],TSN:[117.35,39.12],CGO:[113.84,34.52],FOC:[119.66,25.93],NNG:[108.17,22.61],KWE:[106.8,26.54],LJG:[100.25,26.68],URC:[87.47,43.91],HRB:[126.25,45.62],SHE:[123.48,41.64],TNA:[117.22,36.86],WNZ:[120.85,27.91],KHN:[115.9,28.86],HFE:[117.3,31.78],SJW:[114.7,38.28],LHW:[103.62,36.51],XNN:[101.45,36.53],HET:[111.82,40.85],INC:[106.39,38.32],LXA:[90.91,29.3],YTY:[119.72,32.56],JJN:[118.6,24.81],ACX:[104.96,25.09],YBP:[104.53,28.86],PZI:[101.8,26.54]};
+
+    function activeModel(){ return settingsState?.model||''; }
+    function queryPayload(){ return {model:activeModel(),origin:$('origin').value.split(' · ')[0],destination:$('destination').value,trip,passengers:'1',depDate:$('outDate').value,backDate:trip==='round'?$('backDate').value:'',outTimeStart:$('outTimeStart').value,outTimeEnd:$('outTimeEnd').value,backTimeStart:$('backTimeStart').value,backTimeEnd:$('backTimeEnd').value}; }
+    function shortDate(value){ const [year,month,day]=String(value).split('-'); return month&&day?`${Number(month)}月${Number(day)}日`:value; }
+    function dateValue(date){ const year=date.getFullYear(),month=String(date.getMonth()+1).padStart(2,'0'),day=String(date.getDate()).padStart(2,'0'); return `${year}-${month}-${day}`; }
+    function setDefaultDates(){ const depart=new Date(); depart.setMonth(depart.getMonth()+1); const back=new Date(depart); back.setDate(back.getDate()+4); $('outDate').value=dateValue(depart); $('backDate').value=dateValue(back); }
+    function updateSummary(){ const destination=$('destination').selectedOptions[0].textContent; const parts=[destination,`${shortDate($('outDate').value)} 出发`,`${$('passengers').value} 位成人`,`${$('outTimeStart').value}–${$('outTimeEnd').value} 出发`]; if(trip==='round') parts.push(`${shortDate($('backDate').value)} 返回`); if($('direct').checked) parts.push('直飞优先'); $('querySummary').innerHTML=parts.map(part=>`<span class="summary-chip">${esc(part)}</span>`).join(''); const origin=$('origin').value.split(' · '); $('originCode').textContent=origin[1]||'FROM'; }
+    function setTrip(nextTrip){ trip=nextTrip==='oneway'?'oneway':'round'; document.querySelectorAll('[data-trip]').forEach(item=>item.classList.toggle('active',item.dataset.trip===trip)); $('returnField').hidden=trip==='oneway'; $('returnTimeField').hidden=trip==='oneway'; updateSummary(); }
+    document.querySelectorAll('[data-trip]').forEach(button=>button.addEventListener('click',()=>setTrip(button.dataset.trip)));
+    ['origin','destination','outDate','backDate','outTimeStart','outTimeEnd','backTimeStart','backTimeEnd','direct','noRedeye','duration'].forEach(id=>$(id).addEventListener('change',updateSummary));
+
+    function historyRecords(){ try { const saved=JSON.parse(localStorage.getItem(HISTORY_KEY)||'[]'); return Array.isArray(saved)?saved.filter(record=>record&&record.id&&record.query&&Array.isArray(record.results)):[]; } catch { return []; } }
+    function saveHistoryRecords(records){ try { localStorage.setItem(HISTORY_KEY,JSON.stringify(records.slice(0,HISTORY_LIMIT))); return true; } catch { return false; } }
+    function historyQuery(){ return {originValue:$('origin').value,destination:$('destination').value,trip,depDate:$('outDate').value,backDate:trip==='round'?$('backDate').value:'',outTimeStart:$('outTimeStart').value,outTimeEnd:$('outTimeEnd').value,backTimeStart:$('backTimeStart').value,backTimeEnd:$('backTimeEnd').value,direct:$('direct').checked,noRedeye:$('noRedeye').checked,duration:$('duration').value}; }
+    function historySignature(query){ return JSON.stringify(query); }
+    function historyTime(value){ try { return new Intl.DateTimeFormat('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(value)); } catch { return '刚刚'; } }
+    function historyRoute(record){ const destination=record.query.destination==='all'?'全国探索':record.query.destination; return `${String(record.query.originValue||'广州').split(' · ')[0]} → ${destination}`; }
+    function historyDate(record){ const query=record.query; return query.trip==='round'?`${shortDate(query.depDate)} — ${shortDate(query.backDate)}`:`${shortDate(query.depDate)} 单程`; }
+    function renderHistory(){ const records=historyRecords(); $('historyCount').hidden=!records.length; $('historyCount').textContent=records.length; $('historySummary').textContent=records.length?`已保存 ${records.length} 条 · 最近 12 条`:'暂无已保存查询'; $('clearHistory').hidden=!records.length; $('historyList').innerHTML=records.length?records.map(record=>{ const destinations=new Set(record.results.map(item=>item.code)).size; return `<article class="history-record"><div class="history-record-top"><div><h3 class="history-route">${esc(historyRoute(record))}</h3><p class="history-meta">${esc(historyDate(record))} · ${record.results.length} 组组合 · ${destinations} 个目的地</p></div><time class="history-time">${esc(historyTime(record.savedAt))}</time></div><div class="history-record-actions"><span>历史快照，不重新请求飞猪</span><div class="history-actions"><button class="history-delete" type="button" data-history-delete="${esc(record.id)}">删除</button><button class="history-restore" type="button" data-history-restore="${esc(record.id)}">恢复查看</button></div></div></article>`; }).join(''):'<div class="history-empty">还没有保存的查询。<br>完成一次有航班结果的搜索后，它会自动保存在这台设备。</div>'; }
+    function saveCurrentSearch(){ if(!liveResults.length)return; const query=historyQuery(),signature=historySignature(query),ui={passengers:$('passengers').value,view:currentView,sort:$('sort').value,airlineFilter:$('airlineFilter').value,directFilter:$('directFilter').value,durationFilter:$('durationFilter').value}; const record={id:String(Date.now()),signature,savedAt:new Date().toISOString(),query,ui,results:liveResults,aiReasons}; const existing=historyRecords().filter(item=>item.signature!==signature); if(!saveHistoryRecords([record,...existing])) $('aiNote').textContent='本地记录空间不足，未能保存这次查询'; renderHistory(); }
+    function optionExists(select,value){ return [...select.options].some(option=>option.value===value); }
+    function restoreHistory(record){ const query=record.query,ui=record.ui||{}; if(optionExists($('origin'),query.originValue)) $('origin').value=query.originValue; if(optionExists($('destination'),query.destination)) $('destination').value=query.destination; setTrip(query.trip); ['outDate','backDate','outTimeStart','outTimeEnd','backTimeStart','backTimeEnd'].forEach(id=>{ if(query[id]) $(id).value=query[id]; }); $('direct').checked=Boolean(query.direct); $('noRedeye').checked=Boolean(query.noRedeye); if(optionExists($('duration'),query.duration)) $('duration').value=query.duration; if(optionExists($('passengers'),String(ui.passengers||'1'))) $('passengers').value=String(ui.passengers||'1'); $('sort').value=optionExists($('sort'),ui.sort)?ui.sort:'price'; liveResults=record.results; aiReasons=record.aiReasons||{}; hasSearched=true; searchLoading=false; searchError=''; historyRestoredAt=record.savedAt; recalculatePassengerPrices(); updateResultFilters(); $('airlineFilter').value=optionExists($('airlineFilter'),ui.airlineFilter)?ui.airlineFilter:'all'; $('directFilter').value=optionExists($('directFilter'),ui.directFilter)?ui.directFilter:'all'; $('durationFilter').value=optionExists($('durationFilter'),ui.durationFilter)?ui.durationFilter:'all'; mapSelectedCode=liveResults[0]?.code||''; updateSummary(); $('aiNote').textContent='已从本地查询记录恢复，未重新请求飞猪'; setView(ui.view==='list'?'list':'map'); render(); $('explore').scrollIntoView({behavior:'smooth',block:'start'}); }
+
+    function sortedResults(rows){ const sort=$('sort').value; return [...rows].sort((a,b)=>sort==='duration'?a.duration-b.duration:sort==='direct'?Number(b.direct)-Number(a.direct)||a.totalPrice-b.totalPrice:a.totalPrice-b.totalPrice); }
+    function filteredResults(){ const airline=$('airlineFilter').value,direct=$('directFilter').value,duration=$('durationFilter').value; return sortedResults(liveResults).filter(item=>(airline==='all'||item.airline.includes(airline))&&(direct==='all'||direct==='direct'&&item.direct||direct==='transfer'&&!item.direct)&&(duration==='all'||item.duration<=Number(duration))); }
+    function resultId(item){ return item.id||`${item.code}:${item.airline}:${item.out}:${item.back}`; }
+    function hourText(value){ return Number(value||0).toFixed(1).replace(/\.0$/,''); }
+    function priceBreakdown(item){ const people=Number($('passengers').value); return {ticket:Math.round(Number(item.fare||0)*people),fees:Math.round(Number(item.fees||0)*people)}; }
+    function timingText(item){ const flight=`实际飞行 ${hourText(item.duration)} 小时`; return Number(item.transferWait||0)>0?`${flight} · 中转等待 ${hourText(item.transferWait)} 小时 · 总行程 ${hourText(item.journeyDuration)} 小时`:flight; }
+    function destinationSummaries(rows){ const grouped=new Map(); rows.forEach(item=>{ let summary=grouped.get(item.code); if(!summary){ summary={...item,optionCount:0,airlineSet:new Set()}; grouped.set(item.code,summary); } summary.optionCount+=1; String(item.airline||'').split(' / ').filter(Boolean).forEach(airline=>summary.airlineSet.add(airline)); if(item.totalPrice<summary.totalPrice){ const {optionCount,airlineSet}=summary; Object.assign(summary,item,{optionCount,airlineSet}); } }); return [...grouped.values()].map(summary=>{ const {airlineSet,...item}=summary; return {...item,airlineCount:airlineSet.size}; }).sort((a,b)=>a.totalPrice-b.totalPrice); }
+    function updateResultFilters(){ const selected=$('airlineFilter').value; const values=[...new Set(liveResults.flatMap(item=>String(item.airline).split(' / ')))].sort(); $('airlineFilter').innerHTML='<option value="all">全部航司</option>'+values.map(value=>`<option value="${esc(value)}">${esc(value)}</option>`).join(''); if(values.includes(selected)) $('airlineFilter').value=selected; }
+    function recalculatePassengerPrices(){ const passengers=Number($('passengers').value); liveResults=liveResults.map(item=>({...item,totalPrice:Math.round(Number(item.perPerson||0)*passengers)})); }
+    function priceText(){ const passengers=Number($('passengers').value); return `展示 ${passengers} 位成人的${trip==='round'?'往返':'单程'}预估总价，已合并票面价、燃油附加费与机场建设费。修改人数会在本地即时重算，不会再次查询航班；最终价格和余票以飞猪下单页为准。`; }
+    function setState(name){ $('emptyState').hidden=name!=='empty'; $('loadingState').hidden=name!=='loading'; $('errorState').hidden=name!=='error'; $('resultsState').hidden=name!=='results'; }
+    function render(){
+      if(!hasSearched) return setState('empty');
+      if(searchLoading) return setState('loading');
+      if(searchError){ setState('error'); $('errorMessage').textContent=searchError; return; }
+      setState('results'); const rows=filteredResults(),destinations=destinationSummaries(rows); $('count').textContent=destinations.length; $('resultTitle').textContent=`${queryPayload().origin}出发 · ${destinations.length} 个目的地`; $('resultSubtitle').textContent=`${rows.length} 组航班组合 · ${trip==='round'?'往返':'单程'} · ${$('passengers').value} 位成人${historyRestoredAt?` · 历史快照 ${historyTime(historyRestoredAt)}`:''}`; $('priceExplanation').textContent=priceText();
+      renderList(rows); renderMapCards(rows); if(currentView==='map') requestAnimationFrame(()=>renderMap(rows));
+    }
+    function renderList(rows){ const passengers=Number($('passengers').value),destinations=destinationSummaries(rows); $('resultList').innerHTML=destinations.length?destinations.map((item,index)=>{ const cost=priceBreakdown(item); return `<article class="flight-card" style="--i:${index}"><div class="city-cell"><span class="code-badge">${esc(item.code)}</span><div><strong>${esc(item.city)}</strong><small>${item.airlineCount} 家航司 · ${item.optionCount} 组可选</small></div></div><div class="flight-cell"><strong>最低价组合：${esc(item.outboundAirline)} → ${esc(item.inboundAirline||item.outboundAirline)} · ${esc(item.direct?'直飞':'中转')}</strong><div>去 ${esc(item.out)}–${esc(item.outArr||'—')}　→　${trip==='round'?`回 ${esc(item.back)}–${esc(item.backArr||'—')}`:'单程'}</div><small>${esc(timingText(item))}</small></div><div class="reason-cell"><b>${esc(item.verdict||'值得比较')}</b><small>${esc(aiReasons[resultId(item)]||item.note||'时间与价格匹配')}</small></div><div class="price-cell"><strong>¥${Number(item.totalPrice||0).toLocaleString()}</strong><small>票面 ¥${cost.ticket.toLocaleString()} + 其他费用 ¥${cost.fees.toLocaleString()}</small><button class="decision-action" type="button" data-options-code="${esc(item.code)}">查看航司与时刻</button></div></article>`; }).join(''):'<div class="no-filter-results">当前筛选下没有结果，试试放宽航司、直飞或时长条件。</div>'; }
+    function renderMapCards(rows){ const destinations=destinationSummaries(rows); if(destinations.length&&!destinations.some(item=>item.code===mapSelectedCode)) mapSelectedCode=destinations[0].code; $('mapSummaryCount').textContent=`${destinations.length} 个目的地 · 最低价`; $('mapCards').innerHTML=destinations.map(item=>`<button type="button" class="map-card ${item.code===mapSelectedCode?'selected':''}" data-map-code="${esc(item.code)}"><span class="map-card-top"><span class="map-card-city"><span class="code-badge">${esc(item.code)}</span><span><strong>${esc(item.city)}</strong><small>${item.airlineCount} 家航司 · ${item.optionCount} 组组合</small></span></span><span class="map-card-price">¥${Number(item.totalPrice||0).toLocaleString()}</span></span><span class="map-card-meta"><span>去 ${esc(item.out)}–${esc(item.outArr||'—')} · 回 ${esc(item.back)}–${esc(item.backArr||'—')}</span><span>飞 ${hourText(item.duration)} 小时</span></span></button>`).join(''); }
+    $('mapCards').addEventListener('click',event=>{ const card=event.target.closest('[data-map-code]'); if(!card)return; openDestinationOptions(card.dataset.mapCode); });
+    $('resultList').addEventListener('click',event=>{ const button=event.target.closest('[data-options-code]'); if(button) openDestinationOptions(button.dataset.optionsCode); });
+
+    function openDestinationOptions(code){ const options=filteredResults().filter(item=>item.code===code).sort((a,b)=>a.totalPrice-b.totalPrice); if(!options.length)return; openedDestinationCode=code; const city=options[0].city; const groups=new Map(); options.forEach(item=>{ const airline=item.outboundAirline||String(item.airline).split(' / ')[0]; if(!groups.has(airline))groups.set(airline,[]); groups.get(airline).push(item); }); $('optionsTitle').textContent=`${city}的航司与时刻`; $('optionsSubtitle').textContent=`当前筛选下 ${options.length} 组可选组合 · 按全员总价排序`; $('optionsContent').innerHTML=`<div class="options-intro">每一项都是可独立理解的去程 + 回程组合；去回程可以选不同航司。价格由票面价与其他费用组成，最终下单请在你常用的 App 完成。</div><div class="option-groups">${[...groups.entries()].map(([airline,items])=>`<section class="option-group"><div class="option-group-head"><strong>${esc(airline)}</strong><span>去程航司 · ${items.length} 组组合</span></div>${items.map(item=>{ const cost=priceBreakdown(item); return `<div class="option-row"><div><strong>去程 ${esc(item.outboundAirline)}　${esc(item.out)}–${esc(item.outArr||'—')}</strong><small>${trip==='round'?`回程 ${esc(item.inboundAirline||'—')}　${esc(item.back)}–${esc(item.backArr||'—')} · `:''}${esc(timingText(item))}</small></div><div class="option-price">¥${Number(item.totalPrice||0).toLocaleString()}<small>票面 ¥${cost.ticket.toLocaleString()} + 其他 ¥${cost.fees.toLocaleString()}</small></div></div>`; }).join('')}</section>`).join('')}</div>`; $('optionsLayer').hidden=false; document.body.classList.add('settings-open'); }
+    function closeDestinationOptions(){ $('optionsLayer').hidden=true; openedDestinationCode=''; if($('settingsLayer').hidden) document.body.classList.remove('settings-open'); }
+
+    async function loadChinaMap(){ if(window.echarts?.getMap('china-radar')) return; if(!chinaMapPromise) chinaMapPromise=fetch('/api/china-map').then(response=>{ if(!response.ok) throw new Error('地图边界加载失败'); return response.json(); }).then(data=>echarts.registerMap('china-radar',data)); return chinaMapPromise; }
+    function originCoord(){ const code=$('origin').value.split(' · ')[1]; return airportCoords[code]||airportCoords.CAN; }
+    async function renderMap(rows){
+      if(currentView!=='map'||$('mapView').hidden) return;
+      if(!window.echarts){ $('mapError').hidden=false; $('mapError').textContent='地图组件加载失败，请切换列表查看。'; return; }
+      const mapDestinations=destinationSummaries(rows),locatedCount=mapDestinations.filter(item=>airportCoords[item.code]).length;
+      $('mapLegend').textContent=locatedCount===mapDestinations.length?`${locatedCount} 个目的地 · 每城显示最低组合价 · 点击查看航司选择`:`已定位 ${locatedCount}/${mapDestinations.length} 个目的地 · 未定位城市会保留在右侧速览`;
+      try { await loadChinaMap(); $('mapError').hidden=true; if(!mapChart) mapChart=echarts.init($('flightMap')); const points=destinationSummaries(rows).filter(item=>airportCoords[item.code]).map(item=>({name:item.city,code:item.code,value:[...airportCoords[item.code],item.totalPrice],duration:item.duration,price:item.totalPrice,airlineCount:item.airlineCount,optionCount:item.optionCount,selected:item.code===mapSelectedCode})); const origin=originCoord(); mapChart.setOption({animationDuration:500,tooltip:{trigger:'item',backgroundColor:'#1e2421',borderWidth:0,textStyle:{color:'#fffdf8',fontSize:11},formatter:params=>params.seriesType==='effectScatter'?`${esc(params.data.name)}<br/>最低 ¥${Number(params.data.price).toLocaleString()} · 约 ${esc(params.data.duration)} 小时<br/>${params.data.airlineCount} 家航司 · ${params.data.optionCount} 组组合`:params.name},geo:{map:'china-radar',roam:true,scaleLimit:{min:1,max:5},layoutCenter:['48%','51%'],layoutSize:'110%',itemStyle:{areaColor:'#e8e9e2',borderColor:'#fffdf8',borderWidth:1.1},emphasis:{itemStyle:{areaColor:'#dde6df'},label:{show:false}},select:{disabled:true}},series:[{type:'lines',coordinateSystem:'geo',silent:true,zlevel:1,effect:{show:true,period:6,trailLength:0,symbol:'circle',symbolSize:3,color:'#e45f36'},lineStyle:{color:'#8aa494',width:1,opacity:.45,curveness:.2},data:points.map(point=>({coords:[origin,point.value.slice(0,2)]}))},{type:'scatter',coordinateSystem:'geo',silent:true,zlevel:2,symbolSize:9,itemStyle:{color:'#1e2421',borderColor:'#fffdf8',borderWidth:2},data:[{name:queryPayload().origin,value:origin}]},{type:'effectScatter',coordinateSystem:'geo',zlevel:3,rippleEffect:{scale:2.2,brushType:'stroke'},symbolSize:(value,params)=>params.data.selected?17:12,itemStyle:{color:params=>params.data.selected?'#e45f36':'#37715a',shadowBlur:8,shadowColor:'#1e242133'},label:{show:true,position:'top',distance:6,formatter:params=>`{city|${params.data.name}}\n{price|¥${Number(params.data.price).toLocaleString()}}  {time|${params.data.duration}h}`,backgroundColor:'#fffdf8',borderColor:'#dcded8',borderWidth:1,borderRadius:7,padding:[5,7],rich:{city:{color:'#1e2421',fontSize:10,fontWeight:700},price:{color:'#e45f36',fontSize:10,fontWeight:700},time:{color:'#6f7772',fontSize:9}}},data:points}]},true); mapChart.off('click'); mapChart.on('click',params=>{ if(params.seriesType==='effectScatter') openDestinationOptions(params.data.code); }); mapChart.resize(); }
+      catch(error){ $('mapError').hidden=false; $('mapError').textContent=`${error.message}，请切换列表查看。`; }
+    }
+    window.addEventListener('resize',()=>mapChart?.resize());
+
+    function setView(view){ currentView=view; document.querySelectorAll('[data-view]').forEach(button=>button.classList.toggle('active',button.dataset.view===view)); $('mapView').hidden=view!=='map'; $('listView').hidden=view!=='list'; if(view==='map') requestAnimationFrame(()=>renderMap(filteredResults())); }
+    document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>setView(button.dataset.view)));
+    function friendlySearchError(error){ const message=String(error?.message||error||''); if(/429|rate limit/i.test(message)) return '查询服务当前繁忙，请稍后再试。你的查询条件已保留。'; if(/timeout|timed out|ETIMEDOUT/i.test(message)) return '航班匹配用时过长，请稍后重试或缩小目的地范围。'; if(/flyai|api key|not found/i.test(message)) return '飞猪数据能力尚未就绪，请在右上角运行设置中检查飞猪 API Key。'; return message||'暂时无法获取航班，请稍后重试。'; }
+    async function scanLive(){ const button=$('scan'); hasSearched=true; searchLoading=true; searchError=''; historyRestoredAt=''; $('aiNote').textContent=''; button.classList.add('loading'); button.textContent='正在搜索…'; $('moreOptions').open=false; render(); $('explore').scrollIntoView({behavior:'smooth',block:'start'}); try { const response=await fetch('/api/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(queryPayload())}); const data=await response.json(); if(!response.ok) throw new Error(data.error||'搜索失败'); liveResults=data.results||[]; recalculatePassengerPrices(); aiReasons={}; updateResultFilters(); mapSelectedCode=liveResults[0]?.code||''; if(!liveResults.length) searchError='这组日期和时间暂时没有匹配航班，可以放宽时间范围后再试。'; else saveCurrentSearch(); } catch(error){ liveResults=[]; searchError=friendlySearchError(error); } finally { searchLoading=false; button.classList.remove('loading'); button.textContent='搜索低价目的地'; render(); } }
+    function refreshFilteredResults(){ render(); if(!openedDestinationCode)return; if(filteredResults().some(item=>item.code===openedDestinationCode)) openDestinationOptions(openedDestinationCode); else closeDestinationOptions(); }
+    $('scan').addEventListener('click',scanLive); $('retrySearch').addEventListener('click',scanLive); $('sort').addEventListener('change',refreshFilteredResults); ['airlineFilter','directFilter','durationFilter'].forEach(id=>$(id).addEventListener('change',refreshFilteredResults)); $('passengers').addEventListener('change',()=>{ updateSummary(); if(!hasSearched||searchLoading||searchError)return; recalculatePassengerPrices(); refreshFilteredResults(); });
+    $('aiRank').addEventListener('click',async()=>{ if(!liveResults.length)return; const button=$('aiRank'); button.disabled=true; button.textContent='AI 分析中…'; try { const response=await fetch('/api/ai-rank',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:activeModel(),preferences:{directPriority:$('direct').checked,avoidRedeye:$('noRedeye').checked,maxDuration:$('duration').value,passengers:$('passengers').value},results:liveResults})}); const data=await response.json(); if(!response.ok) throw new Error(data.error||'AI 排序失败'); const positions=new Map((data.order||[]).map((id,index)=>[id,index])); liveResults.sort((a,b)=>(positions.get(resultId(a))??999)-(positions.get(resultId(b))??999)); aiReasons=data.reasons||{}; $('aiNote').textContent=`已通过 ${data.channel==='api'?'API':data.channel||'AI'} 重新排序`; render(); } catch(error){ $('aiNote').textContent=`AI 暂不可用：${error.message}`; } finally { button.disabled=false; button.textContent='AI 帮我选'; } });
+
+    function updateHeaderStatus(){ if(!settingsState)return; const cli=settingsState.cli?.find(item=>item.id===settingsState.aiCli); const ready=settingsState.aiMode==='api'?settingsState.hasAiApiKey:Boolean(cli?.authenticated); $('connectionDot').classList.toggle('ready',ready); $('connectionLabel').textContent=ready?(settingsState.aiMode==='api'?`AI · ${settingsState.model||'API'}`:`AI · ${cli.label}`):'AI 未配置'; }
+    function setAiMode(mode){ editingAiMode=mode; document.querySelectorAll('[data-ai-mode]').forEach(button=>button.classList.toggle('active',button.dataset.aiMode===mode)); $('apiSettings').hidden=mode!=='api'; $('cliSettings').hidden=mode!=='cli'; updateAiStatus(); }
+    function updateAiStatus(){ if(!settingsState)return; const cli=settingsState.cli?.find(item=>item.id===selectedCli); const ready=editingAiMode==='api'?settingsState.hasAiApiKey&&!clearAiKey:Boolean(cli?.authenticated); $('aiStatus').textContent=ready?'可用':editingAiMode==='api'?'需要 Key':'需要 CLI 授权'; $('aiStatus').classList.toggle('off',!ready); }
+    async function loadModels(preferred=''){ const select=$('model'),status=$('modelStatus'); try { select.disabled=true; status.classList.remove('error'); status.textContent='正在读取模型列表…'; const response=await fetch('/api/models'),data=await response.json(); if(!response.ok)throw new Error(data.error||'模型列表读取失败'); const models=data.models||[]; if(!models.length)throw new Error('当前配置没有可用模型'); select.innerHTML=models.map(model=>`<option value="${esc(model.id)}" ${model.id===preferred?'selected':''}>${esc(model.ownedBy?`${model.id} · ${model.ownedBy}`:model.id)}</option>`).join(''); select.disabled=false; status.textContent=`已加载 ${models.length} 个模型`; } catch(error){ select.innerHTML=preferred?`<option value="${esc(preferred)}">${esc(preferred)}</option>`:'<option value="">保存有效 Key 后读取模型</option>'; select.disabled=false; status.textContent=error.message; status.classList.add('error'); } }
+    function renderCliList(){ $('cliList').innerHTML=(settingsState?.cli||[]).map(item=>`<button type="button" class="cli-card ${item.id===selectedCli?'selected':''} ${item.authenticated?'':'unavailable'}" data-cli="${esc(item.id)}"><span class="cli-icon">${esc(item.id.slice(0,3))}</span><span><span class="cli-name">${esc(item.label)}</span><span class="cli-detail">${esc(item.authDetail)}${item.version?` · ${esc(item.version)}`:''}</span></span>${item.authenticated?'<i class="cli-state"></i>':`<span class="cli-copy" data-command="${esc(item.loginCommand)}">复制授权命令</span>`}</button>`).join(''); }
+    function syncSettingsForm(){ $('aiBaseUrl').value=settingsState.aiBaseUrl||''; $('cliModel').value=settingsState.aiMode==='cli'?(settingsState.model||''):''; $('aiApiKey').value=''; $('flyaiApiKey').value=''; selectedCli=settingsState.aiCli||'codex'; clearAiKey=false; clearFlyaiKey=false; ['clearAiKey','clearFlyaiKey'].forEach(id=>{ $(id).classList.remove('armed'); $(id).textContent='清除'; }); $('flyaiStatus').textContent=settingsState.hasFlyaiApiKey?'Key 已配置':settingsState.flyaiCliInstalled?'CLI 已安装':'未配置'; $('flyaiStatus').classList.toggle('off',!settingsState.hasFlyaiApiKey); renderCliList(); setAiMode(settingsState.aiMode||'api'); if(settingsState.aiMode==='api')loadModels(settingsState.model); updateHeaderStatus(); }
+    async function loadSettings(){ const response=await fetch('/api/settings'),data=await response.json(); if(!response.ok)throw new Error(data.error||'设置读取失败'); settingsState=data; syncSettingsForm(); return data; }
+    async function openSettings(){ $('settingsLayer').hidden=false; document.body.classList.add('settings-open'); $('settingsMessage').textContent='正在检查本地配置与 CLI…'; try { await loadSettings(); $('settingsMessage').textContent=''; } catch(error){ $('settingsMessage').textContent=error.message; } }
+    function closeSettings(){ $('settingsLayer').hidden=true; if($('optionsLayer').hidden) document.body.classList.remove('settings-open'); }
+    function openHistory(){ renderHistory(); $('historyLayer').hidden=false; document.body.classList.add('settings-open'); }
+    function closeHistory(){ $('historyLayer').hidden=true; if($('settingsLayer').hidden&&$('optionsLayer').hidden) document.body.classList.remove('settings-open'); }
+    $('openSettings').addEventListener('click',openSettings); $('closeSettings').addEventListener('click',closeSettings); $('cancelSettings').addEventListener('click',closeSettings); $('settingsLayer').addEventListener('click',event=>{ if(event.target===$('settingsLayer'))closeSettings(); }); $('openHistory').addEventListener('click',openHistory); $('closeHistory').addEventListener('click',closeHistory); $('historyLayer').addEventListener('click',event=>{ if(event.target===$('historyLayer'))closeHistory(); }); $('historyList').addEventListener('click',event=>{ const restore=event.target.closest('[data-history-restore]'),remove=event.target.closest('[data-history-delete]'); if(restore){ const record=historyRecords().find(item=>item.id===restore.dataset.historyRestore); if(record){ closeHistory(); restoreHistory(record); } } if(remove){ saveHistoryRecords(historyRecords().filter(item=>item.id!==remove.dataset.historyDelete)); renderHistory(); } }); $('clearHistory').addEventListener('click',()=>{ localStorage.removeItem(HISTORY_KEY); renderHistory(); }); $('closeOptions').addEventListener('click',closeDestinationOptions); $('optionsLayer').addEventListener('click',event=>{ if(event.target===$('optionsLayer'))closeDestinationOptions(); }); document.addEventListener('keydown',event=>{ if(event.key!=='Escape')return; if(!$('historyLayer').hidden)closeHistory(); else if(!$('optionsLayer').hidden)closeDestinationOptions(); else if(!$('settingsLayer').hidden)closeSettings(); });
+    document.querySelectorAll('[data-ai-mode]').forEach(button=>button.addEventListener('click',()=>{ setAiMode(button.dataset.aiMode); if(button.dataset.aiMode==='api'&&!$('model').options.length)loadModels(settingsState?.model||''); }));
+    $('cliList').addEventListener('click',async event=>{ const copy=event.target.closest('[data-command]'); if(copy){ event.preventDefault(); event.stopPropagation(); await navigator.clipboard.writeText(copy.dataset.command); copy.textContent='已复制'; return; } const card=event.target.closest('[data-cli]'),item=settingsState?.cli.find(value=>value.id===card?.dataset.cli); if(!item?.authenticated)return; selectedCli=item.id; renderCliList(); updateAiStatus(); });
+    function toggleClear(button,type){ if(type==='ai')clearAiKey=!clearAiKey; else clearFlyaiKey=!clearFlyaiKey; const active=type==='ai'?clearAiKey:clearFlyaiKey; button.classList.toggle('armed',active); button.textContent=active?'将清除':'清除'; updateAiStatus(); }
+    $('clearAiKey').addEventListener('click',event=>toggleClear(event.currentTarget,'ai')); $('clearFlyaiKey').addEventListener('click',event=>toggleClear(event.currentTarget,'flyai')); $('refreshCli').addEventListener('click',async()=>{ $('settingsMessage').textContent='正在重新检测 CLI…'; try { await loadSettings(); $('settingsMessage').textContent='检测完成'; } catch(error){ $('settingsMessage').textContent=error.message; } });
+    $('saveSettings').addEventListener('click',async()=>{ const button=$('saveSettings'); button.disabled=true; button.textContent='正在保存…'; const payload={aiMode:editingAiMode,aiCli:selectedCli,aiBaseUrl:$('aiBaseUrl').value,aiApiKey:$('aiApiKey').value,flyaiApiKey:$('flyaiApiKey').value,clearAiApiKey:clearAiKey,clearFlyaiApiKey:clearFlyaiKey,model:editingAiMode==='api'?$('model').value:$('cliModel').value}; try { const response=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),data=await response.json(); if(!response.ok)throw new Error(data.error||'保存失败'); settingsState=data; updateHeaderStatus(); closeSettings(); } catch(error){ $('settingsMessage').textContent=error.message; } finally { button.disabled=false; button.textContent='保存到本机'; } });
+    setDefaultDates(); updateSummary(); renderHistory(); render(); loadSettings().catch(()=>{ $('connectionLabel').textContent='配置检查失败'; });
+  </script>
+</body>
+</html>
