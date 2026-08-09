@@ -239,12 +239,12 @@
     .option-ticket .flight-ticket { max-width:390px; padding:2px 0; }
     .option-ticket .ticket-time { font-size:18px; }
     .option-price { color:var(--accent); font:700 17px var(--mono); text-align:right; }
-    .option-price small { color:var(--green); font:400 9px var(--body); white-space:nowrap; }
+    .option-price small { display:block; margin-top:4px; color:var(--green); font:400 9px var(--body); white-space:nowrap; }
 
     @media(max-width:1180px) { .search-grid { grid-template-columns:1fr 1fr 1.2fr 1.2fr .75fr auto; } .passenger-field { display:none; } .map-layout { grid-template-columns:minmax(0,1fr) 300px; } }
     @media(max-width:900px) { .shell { width:min(100% - 28px,1500px); } .search-grid { grid-template-columns:1fr 1fr; } .search-button { grid-column:1/-1; } .passenger-field { display:block; } .map-layout { grid-template-columns:1fr; height:auto; } .map-stage { height:clamp(330px,58dvh,520px); border-right:0; border-bottom:1px solid var(--line); } .map-side { display:grid; grid-template-columns:1fr 1fr; gap:8px; height:auto; max-height:none; } .map-side-head { grid-column:1/-1; } .map-card { margin:0; } .list-labels { display:none; } .flight-card { grid-template-columns:1fr 1fr; } .price-cell { text-align:left; } }
     @media(max-width:600px) { .runtime-state { display:none; } .history-trigger { padding:0 10px; } .search-intro { display:block; } .search-intro p { margin-top:7px; } .search-grid { grid-template-columns:1fr; } .search-button { grid-column:auto; } .search-subrow { align-items:stretch; flex-direction:column; } .more-options { width:100%; } .more-options summary { text-align:center; } .more-panel { position:fixed; left:14px; right:14px; top:auto; bottom:14px; width:auto; } .time-grid,.preference-row { grid-template-columns:1fr; } .results-top { align-items:flex-start; flex-direction:column; } .results-actions { width:100%; flex-wrap:wrap; } .filters-bar { align-items:flex-start; flex-direction:column; } .ai-note { text-align:left; } .map-side { grid-template-columns:1fr; } .flight-card { grid-template-columns:1fr; } .settings-panel,.options-panel,.history-panel { padding:23px 20px 18px; } footer { display:block; } footer span { display:block; margin-top:6px; } }
-    @media(max-width:600px) { .option-row { grid-template-columns:1fr; gap:8px; } .option-ticket .flight-ticket { max-width:none; } .option-ticket .ticket-time { gap:4px; font-size:16px; } .option-price { display:flex; align-items:baseline; justify-content:flex-start; gap:7px; text-align:left; } }
+    @media(max-width:600px) { .option-row { grid-template-columns:1fr; gap:8px; } .option-ticket .flight-ticket { max-width:none; } .option-ticket .ticket-time { gap:4px; font-size:16px; } .option-price { text-align:left; } }
     @media(prefers-reduced-motion:reduce) { *,*:before,*:after { animation:none!important; transition:none!important; scroll-behavior:auto!important; } }
   </style>
 </head>
