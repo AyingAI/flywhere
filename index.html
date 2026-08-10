@@ -18,8 +18,8 @@
     button { color:inherit; }
     .shell { width:min(1500px,calc(100% - 48px)); margin:auto; }
     header { height:68px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); }
-    .brand { display:flex; align-items:center; gap:10px; font-weight:800; letter-spacing:-.035em; font-size:17px; }
-    .brand-mark { width:29px; height:29px; display:grid; place-items:center; border-radius:50%; background:var(--ink); color:var(--surface); font:700 11px var(--mono); }
+    .brand { display:flex; align-items:center; gap:8px; font-weight:800; letter-spacing:-.035em; font-size:17px; }
+    .brand-logo { width:92px; height:28px; object-fit:contain; object-position:left center; }
     .brand-sub { color:var(--muted); font-weight:400; }
     .header-actions { display:flex; align-items:center; gap:10px; }
     .runtime-state { display:flex; align-items:center; gap:7px; color:var(--muted); font-size:11px; }
@@ -251,7 +251,7 @@
 <body>
   <div class="shell">
     <header>
-      <div class="brand"><span class="brand-mark">F</span>飞哪里 <span class="brand-sub">FlyWhere</span></div>
+      <div class="brand"><img class="brand-logo" src="https://gitee.com/ayingsxcw/gameimg/raw/master/img/20260811074953392.webp" alt="飞哪里"><span class="brand-sub">FlyWhere</span></div>
       <div class="header-actions"><div class="runtime-state"><i class="connection-dot" id="connectionDot"></i><span id="connectionLabel">检查配置…</span></div><button class="history-trigger" id="openHistory" type="button">查询记录 <span class="history-count" id="historyCount" hidden>0</span></button><button class="settings-trigger" id="openSettings">运行设置</button></div>
     </header>
     <main>
