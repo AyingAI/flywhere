@@ -493,4 +493,4 @@ const server = http.createServer(async (request, response) => {
   send(response, 404, { error: 'Not found' });
 });
 function send(response, status, data) { response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); response.end(JSON.stringify(data)); }
-server.listen(port, () => console.log(`飞哪里 Radar running at http://localhost:${port}`));
+server.listen(port, () => console.log(`飞哪里 FlyWhere running at http://localhost:${port}`));

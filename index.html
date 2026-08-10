@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="飞哪里 Radar：固定日期，从广州出发，哪里便宜去哪里。" />
+  <meta name="description" content="飞哪里 FlyWhere：固定日期，根据票价决定飞哪里。" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%231e2421'/%3E%3Cpath d='M10 21 22 9m-8 0h8v8' stroke='%23fffdf8' stroke-width='2.2' fill='none'/%3E%3C/svg%3E" />
-  <title>飞哪里 Radar · 哪里便宜去哪里</title>
+  <title>飞哪里 FlyWhere · 根据票价，决定飞哪里</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap');
     :root { --ink:#1e2421; --muted:#6f7772; --paper:#f3f1eb; --surface:#fffdf8; --surface-2:#f7f5ef; --line:#dcded8; --line-dark:#b9beb9; --accent:#e45f36; --accent-soft:#f9e7df; --green:#37715a; --green-soft:#e5eee9; --mono:'DM Sans',sans-serif; --map-height:clamp(340px,calc(100dvh - 330px),760px); }
@@ -251,12 +251,12 @@
 <body>
   <div class="shell">
     <header>
-      <div class="brand"><span class="brand-mark">R</span>飞哪里 <span class="brand-sub">Radar</span></div>
+      <div class="brand"><span class="brand-mark">F</span>飞哪里 <span class="brand-sub">FlyWhere</span></div>
       <div class="header-actions"><div class="runtime-state"><i class="connection-dot" id="connectionDot"></i><span id="connectionLabel">检查配置…</span></div><button class="history-trigger" id="openHistory" type="button">查询记录 <span class="history-count" id="historyCount" hidden>0</span></button><button class="settings-trigger" id="openSettings">运行设置</button></div>
     </header>
     <main>
       <section class="search-deck" aria-label="机票查询">
-        <div class="search-intro"><div><div class="eyebrow">Price-led flight discovery</div><h1>哪里便宜去哪里</h1></div><p>固定日期后，按全体旅客的往返含税总价排序目的地。</p></div>
+        <div class="search-intro"><div><div class="eyebrow">Price-led flight discovery</div><h1>根据票价，决定飞哪里</h1></div><p>固定日期后，按全体旅客的往返含税总价排序目的地。</p></div>
         <div class="search-grid">
           <div class="search-field route-control"><label for="origin">从哪里出发</label><span class="route-code" id="originCode">CAN</span><select class="control" id="origin"><option>广州 · CAN · 白云</option><option>深圳 · SZX · 宝安</option><option>上海 · SHA · 虹桥</option><option>北京 · BJS · 首都 / 大兴</option></select></div>
           <div class="search-field route-control"><label for="destination">飞到哪里</label><span class="route-code">TO</span><select class="control" id="destination"><option value="all" selected>全国探索 · 不限目的地</option><option value="海口">海口</option><option value="昆明">昆明</option><option value="成都">成都</option><option value="厦门">厦门</option><option value="西安">西安</option><option value="三亚">三亚</option></select></div>
@@ -286,7 +286,7 @@
         </div>
       </section>
     </main>
-    <footer><span>飞哪里 Radar / 真实航班反向探索</span><span>最终价格与余票以飞猪下单页为准 · 天气预报来自 <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Open-Meteo</a></span></footer>
+    <footer><span>飞哪里 FlyWhere / 真实航班反向探索</span><span>最终价格与余票以飞猪下单页为准 · 天气预报来自 <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Open-Meteo</a></span></footer>
   </div>
 
   <div class="drawer-layer" id="settingsLayer" hidden>
