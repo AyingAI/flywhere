@@ -6,6 +6,7 @@ const { execFile } = require('child_process');
 
 loadEnv();
 const port = Number(process.env.PORT || 4173);
+const host = process.env.HOST || '127.0.0.1';
 const configPath = path.join(__dirname, '.flymap-config.json');
 let localConfig = loadLocalConfig();
 const feePolicy = { airportConstruction: 50, fuelSurcharge: 60, updatedAt: '2026-08-09', source: 'FlyAI 未返回费用明细时的预算兜底' };
@@ -21,6 +22,12 @@ const searchCache = new Map();
 const searchInflight = new Map();
 const weatherCache = new Map();
 const geocodeCache = new Map();
+const securityHeaders = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'no-referrer',
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://gitee.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+};
 
 function loadEnv() {
   const envPath = path.join(__dirname, '.env');
@@ -526,15 +533,29 @@ function makeResult(outbound, inbound, query) {
   return { id, city: outbound.city, code: outbound.code, date: outbound.date, backDate: inbound?.date, outboundAirline: outbound.airline, inboundAirline: inbound?.airline || '', airline: inbound ? `${outbound.airline} / ${inbound.airline}` : outbound.airline, out: outbound.time, outArr: outbound.arrivalTime || '—', back: inbound?.time || '—', backArr: inbound?.arrivalTime || '—', outboundDirect: outbound.direct, inboundDirect: inbound?.direct ?? true, duration: Number((flightMinutes / 60).toFixed(1)), journeyDuration: Number((journeyMinutes / 60).toFixed(1)), transferWait: Number((transferWaitMinutes / 60).toFixed(1)), direct: outbound.direct && (!inbound || inbound.direct), fare: outbound.fare + (inbound?.fare || 0), fees: outboundFee.amount + inboundFee.amount, feeSource: outboundFee.source === '接口' && inboundFee.source === '接口' ? '接口' : '预估', perPerson: Math.round(perPerson), totalPrice: Math.round(perPerson * people), jumpUrl: outbound.jumpUrl };
 }
 
+function requestAllowed(request) {
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) return true;
+  const contentType = String(request.headers['content-type'] || '').toLowerCase();
+  if (!contentType.startsWith('application/json')) return false;
+  const origin = request.headers.origin;
+  if (!origin) return true;
+  try {
+    const url = new URL(origin);
+    const requestHost = String(request.headers.host || '');
+    return url.host === requestHost && ['http:', 'https:'].includes(url.protocol);
+  } catch { return false; }
+}
+
 const server = http.createServer(async (request, response) => {
+  if (!requestAllowed(request)) return send(response, 403, { error: '仅接受来自当前页面的 JSON 请求' });
   if (request.url === '/api/fee-policy') return send(response, 200, feePolicy);
   if (request.url === '/api/china-map' && request.method === 'GET') {
     try { return send(response, 200, await getChinaMap()); }
     catch (error) { return send(response, 502, { error: error.message }); }
   }
   if (request.url === '/vendor/echarts.min.js' && request.method === 'GET') {
-    try { response.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=86400' }); return response.end(await getEchartsSource()); }
-    catch (error) { response.writeHead(502, { 'Content-Type': 'application/javascript; charset=utf-8' }); return response.end(`console.error(${JSON.stringify(error.message)})`); }
+    try { response.writeHead(200, { ...securityHeaders, 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=86400' }); return response.end(await getEchartsSource()); }
+    catch (error) { response.writeHead(502, { ...securityHeaders, 'Content-Type': 'application/javascript; charset=utf-8' }); return response.end(`console.error(${JSON.stringify(error.message)})`); }
   }
   if (request.url === '/api/settings' && request.method === 'GET') {
     try { return send(response, 200, await publicSettings()); }
@@ -560,10 +581,10 @@ const server = http.createServer(async (request, response) => {
     let body = ''; request.on('data', chunk => body += chunk); request.on('end', async () => { try { send(response, 200, { results: await search(JSON.parse(body)) }); } catch (error) { send(response, error.statusCode || 502, { error: error.message }); } }); return;
   }
   if ((request.url === '/' || request.url === '/index.html') && request.method === 'GET') {
-    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    response.writeHead(200, { ...securityHeaders, 'Content-Type': 'text/html; charset=utf-8' });
     return fs.createReadStream(path.join(__dirname, 'index.html')).pipe(response);
   }
   send(response, 404, { error: 'Not found' });
 });
-function send(response, status, data) { response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); response.end(JSON.stringify(data)); }
-server.listen(port, () => console.log(`飞哪里 FlyWhere running at http://localhost:${port}`));
+function send(response, status, data) { response.writeHead(status, { ...securityHeaders, 'Content-Type': 'application/json; charset=utf-8' }); response.end(JSON.stringify(data)); }
+server.listen(port, host, () => console.log(`飞哪里 FlyWhere running at http://${host}:${port}`));

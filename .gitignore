@@ -2,3 +2,12 @@
 .env.*
 !.env.example
 .flymap-config.json
+node_modules/
+output/
+.playwright-cli/
+.playwright-mcp/
+.DS_Store
+.agents/
+.claude/
+.firecrawl-fees.json
+logo/
