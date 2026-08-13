@@ -62,8 +62,58 @@ function execCapture(command, args, options = {}) {
 const cliDefinitions = {
   codex: { label: 'Codex CLI', command: 'codex', loginCommand: 'codex login' },
   claude: { label: 'Claude Code', command: 'claude', loginCommand: 'claude auth login' },
-  gemini: { label: 'Gemini CLI', command: 'gemini', loginCommand: 'gemini' }
+  gemini: { label: 'Gemini CLI', command: 'gemini', loginCommand: 'gemini' },
+  pi: { label: 'Pi', command: 'pi', loginCommand: 'pi' },
+  kimi: { label: 'Kimi Code', command: 'kimi', loginCommand: 'kimi' },
+  opencode: { label: 'OpenCode', command: 'opencode', loginCommand: 'opencode auth login' }
 };
+
+function hasFileContent(filePath) {
+  try { return fs.statSync(filePath).size > 2; } catch { return false; }
+}
+
+function hasCredentialFile(directory) {
+  try { return fs.readdirSync(directory).some(name => hasFileContent(path.join(directory, name))); } catch { return false; }
+}
+
+function hasEnvironmentCredential(names) {
+  return names.some(name => Boolean(String(process.env[name] || '').trim()));
+}
+
+async function cliAuthorization(id) {
+  const home = os.homedir();
+  if (id === 'codex') {
+    const output = await execCapture('codex', ['login', 'status']);
+    const authenticated = /logged in/i.test(output);
+    return { authenticated, authDetail: authenticated ? output.replace(/^Logged in using\s*/i, '已通过 ') : '尚未登录' };
+  }
+  if (id === 'claude') {
+    const output = await execCapture('claude', ['auth', 'status']);
+    const status = JSON.parse(output);
+    const authenticated = Boolean(status.loggedIn);
+    return { authenticated, authDetail: authenticated ? `已授权 · ${status.apiProvider || status.authMethod || '本地账户'}` : '尚未登录' };
+  }
+  if (id === 'gemini') {
+    const authenticated = hasEnvironmentCredential(['GEMINI_API_KEY', 'GOOGLE_API_KEY']) || hasFileContent(path.join(home, '.gemini', 'oauth_creds.json')) || hasFileContent(path.join(home, '.config', 'gemini', 'oauth_creds.json'));
+    return { authenticated, authDetail: authenticated ? '已发现本地授权凭据' : '已安装，请先在终端完成登录' };
+  }
+  if (id === 'pi') {
+    const authenticated = hasEnvironmentCredential(['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_API_KEY', 'OPENROUTER_API_KEY', 'XAI_API_KEY']) || hasFileContent(path.join(home, '.pi', 'agent', 'auth.json'));
+    return { authenticated, authDetail: authenticated ? '已发现本地授权凭据' : '已安装，请在 Pi 中执行 /login' };
+  }
+  if (id === 'kimi') {
+    const kimiHome = process.env.KIMI_CODE_HOME || path.join(home, '.kimi-code');
+    const authenticated = hasCredentialFile(path.join(kimiHome, 'credentials')) || /(?:^|\n)\s*(?:api_key|oauth)\s*=/m.test(fs.existsSync(path.join(kimiHome, 'config.toml')) ? fs.readFileSync(path.join(kimiHome, 'config.toml'), 'utf8') : '');
+    return { authenticated, authDetail: authenticated ? '已发现本地授权凭据' : '已安装，请在 Kimi Code 中执行 /login' };
+  }
+  if (id === 'opencode') {
+    const output = await execCapture('opencode', ['auth', 'list']);
+    const matched = output.match(/(\d+)\s+credentials?/i);
+    const authenticated = Number(matched?.[1] || 0) > 0 || hasFileContent(path.join(home, '.local', 'share', 'opencode', 'auth.json'));
+    return { authenticated, authDetail: authenticated ? '已发现本地授权凭据' : '已安装，请运行 opencode auth login' };
+  }
+  return { authenticated: false, authDetail: '已安装，尚未确认授权' };
+}
 
 async function detectCli(id) {
   const definition = cliDefinitions[id];
@@ -75,21 +125,7 @@ async function detectCli(id) {
     return { id, label: definition.label, installed: false, authenticated: false, version: '', path: '', authDetail: '未安装', loginCommand: definition.loginCommand };
   }
   try {
-    let authenticated = false;
-    let authDetail = '已安装，尚未确认授权';
-    if (id === 'codex') {
-      const output = await execCapture('codex', ['login', 'status']);
-      authenticated = /logged in/i.test(output);
-      authDetail = authenticated ? output.replace(/^Logged in using\s*/i, '已通过 ') : '尚未登录';
-    } else if (id === 'claude') {
-      const output = await execCapture('claude', ['auth', 'status']);
-      const status = JSON.parse(output);
-      authenticated = Boolean(status.loggedIn);
-      authDetail = authenticated ? `已授权 · ${status.apiProvider || status.authMethod || '本地账户'}` : '尚未登录';
-    } else {
-      authenticated = Boolean(process.env.GEMINI_API_KEY || fs.existsSync(path.join(os.homedir(), '.gemini', 'oauth_creds.json')));
-      authDetail = authenticated ? '已发现本地授权凭据' : '已安装，请先在终端完成登录';
-    }
+    const { authenticated, authDetail } = await cliAuthorization(id);
     return { id, label: definition.label, installed: true, authenticated, version, path: executable, authDetail, loginCommand: definition.loginCommand };
   } catch (error) {
     return { id, label: definition.label, installed: true, authenticated: false, version, path: executable, authDetail: '已安装，尚未登录', loginCommand: definition.loginCommand };
@@ -100,13 +136,17 @@ async function publicSettings() {
   const cli = await Promise.all(Object.keys(cliDefinitions).map(detectCli));
   let flyaiCliInstalled = false;
   try { flyaiCliInstalled = Boolean(await execCapture('which', ['flyai'])); } catch {}
+  const aiApiKey = effective('AI_API_KEY');
+  const flyaiApiKey = effective('FLYAI_API_KEY');
   return {
     aiMode: localConfig.aiMode || 'api',
     aiCli: localConfig.aiCli || 'codex',
     aiBaseUrl: effective('AI_BASE_URL'),
     model: effective('MODEL_NAME'),
-    hasAiApiKey: Boolean(effective('AI_API_KEY')),
-    hasFlyaiApiKey: Boolean(effective('FLYAI_API_KEY')),
+    hasAiApiKey: Boolean(aiApiKey),
+    hasFlyaiApiKey: Boolean(flyaiApiKey),
+    aiApiKeyMask: aiApiKey ? '••••••••' : '',
+    flyaiApiKeyMask: flyaiApiKey ? '••••••••' : '',
     flyaiCliInstalled,
     cli
   };
@@ -116,7 +156,15 @@ function saveSettings(payload) {
   const next = { ...localConfig };
   if (payload.aiMode === 'api' || payload.aiMode === 'cli') next.aiMode = payload.aiMode;
   if (cliDefinitions[payload.aiCli]) next.aiCli = payload.aiCli;
-  if (typeof payload.aiBaseUrl === 'string') next.aiBaseUrl = payload.aiBaseUrl.trim();
+  if (typeof payload.aiBaseUrl === 'string') {
+    const aiBaseUrl = payload.aiBaseUrl.trim();
+    if (aiBaseUrl) {
+      let parsed;
+      try { parsed = new URL(aiBaseUrl); } catch { throw new Error('请输入有效的 OpenAI 兼容接口地址'); }
+      if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('接口地址仅支持 http 或 https');
+      next.aiBaseUrl = aiBaseUrl.replace(/\/+$/, '');
+    } else next.aiBaseUrl = '';
+  }
   if (typeof payload.model === 'string') next.model = payload.model.trim();
   if (typeof payload.aiApiKey === 'string' && payload.aiApiKey.trim()) next.aiApiKey = payload.aiApiKey.trim();
   if (typeof payload.flyaiApiKey === 'string' && payload.flyaiApiKey.trim()) next.flyaiApiKey = payload.flyaiApiKey.trim();
@@ -259,12 +307,17 @@ function runFlyai(args, model) {
 }
 
 let modelsCache = { expiresAt: 0, models: [] };
+function openAiCompatibleUrl(pathname) {
+  const baseUrl = effective('AI_BASE_URL').trim().replace(/\/+$/, '');
+  if (!baseUrl) throw new Error('未配置 OpenAI 兼容接口地址');
+  return `${baseUrl.endsWith('/v1') ? baseUrl : `${baseUrl}/v1`}/${pathname.replace(/^\//, '')}`;
+}
+
 async function listModels() {
   if (modelsCache.expiresAt > Date.now()) return modelsCache.models;
-  const baseUrl = effective('AI_BASE_URL');
   const apiKey = effective('AI_API_KEY');
-  if (!baseUrl || !apiKey) throw new Error('未配置 AI 接口地址或 API Key');
-  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/v1/models`, { headers: { Authorization: `Bearer ${apiKey}` } });
+  if (!apiKey) throw new Error('未配置 AI API Key');
+  const response = await fetch(openAiCompatibleUrl('models'), { headers: { Authorization: `Bearer ${apiKey}` } });
   if (!response.ok) throw new Error(`模型列表请求失败（HTTP ${response.status}）`);
   const payload = await response.json();
   const models = (Array.isArray(payload?.data) ? payload.data : [])
@@ -420,9 +473,29 @@ async function runAiCli(prompt, cli, model) {
     args.push(prompt);
     return execCapture('claude', args, { timeout: 90000 });
   }
-  const args = ['-p', prompt, '--output-format', 'text', '--approval-mode', 'plan'];
-  if (model) args.push('--model', model);
-  return execCapture('gemini', args, { timeout: 90000 });
+  if (cli === 'gemini') {
+    const args = ['-p', prompt, '--output-format', 'text', '--approval-mode', 'plan'];
+    if (model) args.push('--model', model);
+    return execCapture('gemini', args, { timeout: 90000 });
+  }
+  if (cli === 'pi') {
+    const args = ['--print', '--no-session', '--tools', 'read,grep,find,ls'];
+    if (model) args.push('--model', model);
+    args.push(prompt);
+    return execCapture('pi', args, { timeout: 90000 });
+  }
+  if (cli === 'kimi') {
+    const args = ['--plan', '--prompt', prompt, '--output-format', 'text'];
+    if (model) args.unshift('--model', model);
+    return execCapture('kimi', args, { timeout: 90000 });
+  }
+  if (cli === 'opencode') {
+    const args = ['run'];
+    if (model) args.push('--model', model);
+    args.push(prompt);
+    return execCapture('opencode', args, { timeout: 90000 });
+  }
+  throw new Error(`暂不支持通过 ${status.label} 调用 AI`);
 }
 
 async function aiRank(payload) {
@@ -434,10 +507,10 @@ async function aiRank(payload) {
     const result = parseAiJson(await runAiCli(prompt, cli, model));
     return { ...result, model: model || cliDefinitions[cli].label, channel: cli };
   }
-  const baseUrl = effective('AI_BASE_URL'); const apiKey = effective('AI_API_KEY');
-  if (!baseUrl || !apiKey) throw new Error('未配置 AI 接口地址或 API Key');
+  const apiKey = effective('AI_API_KEY');
+  if (!apiKey) throw new Error('未配置 OpenAI 兼容接口地址或 API Key');
   if (!model) throw new Error('请选择一个 AI 模型');
-  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/v1/chat/completions`, { method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${apiKey}`}, body:JSON.stringify({model, temperature:0.2, messages:[{role:'user', content:prompt}]}) });
+  const response = await fetch(openAiCompatibleUrl('chat/completions'), { method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${apiKey}`}, body:JSON.stringify({model, temperature:0.2, messages:[{role:'user', content:prompt}]}) });
   if (!response.ok) throw new Error(`AI 排序请求失败（HTTP ${response.status}）`);
   const data = await response.json(); const content = data?.choices?.[0]?.message?.content || '';
   return { ...parseAiJson(content), model, channel: 'api' };
