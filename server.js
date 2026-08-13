@@ -26,7 +26,7 @@ const securityHeaders = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
   'Referrer-Policy': 'no-referrer',
-  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://gitee.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://gitee.com https://raw.giteeusercontent.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 };
 
 function loadEnv() {
@@ -59,11 +59,29 @@ function writeLocalConfig(next) {
 
 function execCapture(command, args, options = {}) {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { timeout: options.timeout || 10000, maxBuffer: 4 * 1024 * 1024, env: options.env || process.env, cwd: __dirname }, (error, stdout, stderr) => {
+    execFile(command, args, { timeout: options.timeout || 10000, maxBuffer: options.maxBuffer || 4 * 1024 * 1024, env: options.env || process.env, cwd: __dirname }, (error, stdout, stderr) => {
       if (error) return reject(new Error(String(stderr || stdout || error.message).trim()));
       resolve(String(stdout || stderr).trim());
     });
   });
+}
+
+async function installFlyaiCli() {
+  try {
+    await execCapture('npm', ['--version']);
+  } catch {
+    throw new Error('没有找到 Node.js/npm，暂时无法自动安装。请先安装 Node.js 20 或更高版本后重试。');
+  }
+  try {
+    await execCapture('npm', ['install', '-g', '@fly-ai/flyai-cli', '--no-fund', '--no-audit'], { timeout: 180000, maxBuffer: 8 * 1024 * 1024 });
+  } catch (error) {
+    const message = String(error.message || '');
+    if (/EACCES|permission denied/i.test(message)) throw new Error('当前用户没有全局安装权限。请用拥有 Node.js 安装权限的账户重试，或联系设备管理员。');
+    if (/ENOTFOUND|network|fetch failed|timed out/i.test(message)) throw new Error('无法下载飞猪查询组件，请检查网络后重试。');
+    throw new Error('安装飞猪查询组件失败，请稍后重试。');
+  }
+  try { await execCapture('which', ['flyai']); }
+  catch { throw new Error('组件已下载，但当前服务还未找到 flyai。请关闭并重新打开本应用后再次检测。'); }
 }
 
 const cliDefinitions = {
@@ -314,26 +332,30 @@ function runFlyai(args, model) {
 }
 
 let modelsCache = { expiresAt: 0, models: [] };
-function openAiCompatibleUrl(pathname) {
-  const baseUrl = effective('AI_BASE_URL').trim().replace(/\/+$/, '');
+function openAiCompatibleUrl(pathname, overrideBaseUrl) {
+  const baseUrl = String(overrideBaseUrl === undefined ? effective('AI_BASE_URL') : overrideBaseUrl).trim().replace(/\/+$/, '');
   if (!baseUrl) throw new Error('未配置 OpenAI 兼容接口地址');
+  let parsed;
+  try { parsed = new URL(baseUrl); } catch { throw new Error('请输入有效的 OpenAI 兼容接口地址'); }
+  if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('接口地址仅支持 http 或 https');
   return `${baseUrl.endsWith('/v1') ? baseUrl : `${baseUrl}/v1`}/${pathname.replace(/^\//, '')}`;
 }
 
-async function listModels() {
-  if (modelsCache.expiresAt > Date.now()) return modelsCache.models;
-  const apiKey = effective('AI_API_KEY');
+async function listModels(options = {}) {
+  const useConfigured = options.baseUrl === undefined && options.apiKey === undefined;
+  if (useConfigured && modelsCache.expiresAt > Date.now()) return modelsCache.models;
+  const apiKey = String(useConfigured ? effective('AI_API_KEY') : options.apiKey || '').trim();
   if (!apiKey) throw new Error('未配置 AI API Key');
-  const response = await fetch(openAiCompatibleUrl('models'), { headers: { Authorization: `Bearer ${apiKey}` } });
+  const response = await fetch(openAiCompatibleUrl('models', useConfigured ? undefined : options.baseUrl), { headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(15000) });
   if (!response.ok) throw new Error(`模型列表请求失败（HTTP ${response.status}）`);
   const payload = await response.json();
   const models = (Array.isArray(payload?.data) ? payload.data : [])
     .filter(model => model?.id)
     .map(model => ({ id: String(model.id), ownedBy: model.owned_by || '', endpoints: model.supported_endpoint_types || [] }))
     .sort((a, b) => a.id.localeCompare(b.id));
-  const configured = effective('MODEL_NAME').split(',').map(item => item.trim()).filter(item => item && item !== '*');
+  const configured = useConfigured ? effective('MODEL_NAME').split(',').map(item => item.trim()).filter(item => item && item !== '*') : [];
   for (const id of configured) if (!models.some(model => model.id === id)) models.unshift({ id, ownedBy: 'env', endpoints: [] });
-  modelsCache = { expiresAt: Date.now() + 5 * 60 * 1000, models };
+  if (useConfigured) modelsCache = { expiresAt: Date.now() + 5 * 60 * 1000, models };
   return models;
 }
 
@@ -567,9 +589,25 @@ const server = http.createServer(async (request, response) => {
       catch (error) { return send(response, 400, { error: error.message }); }
     }); return;
   }
+  if (request.url === '/api/flyai/install' && request.method === 'POST') {
+    try {
+      await installFlyaiCli();
+      return send(response, 200, { installed: true, message: '飞猪查询组件已安装，可以保存 API Key 并开始搜索。' });
+    } catch (error) { return send(response, 502, { installed: false, error: error.message }); }
+  }
   if (request.url === '/api/models' && request.method === 'GET') {
     try { return send(response, 200, { models: await listModels(), configured: effective('MODEL_NAME') }); }
     catch (error) { return send(response, 502, { error: error.message, models: [] }); }
+  }
+  if (request.url === '/api/models' && request.method === 'POST') {
+    let body = ''; request.on('data', chunk => body += chunk); request.on('end', async () => {
+      try {
+        const payload = JSON.parse(body);
+        const apiKey = String(payload.apiKey || (payload.useSavedKey ? effective('AI_API_KEY') : '')).trim();
+        const models = await listModels({ baseUrl: payload.baseUrl, apiKey });
+        return send(response, 200, { models, configured: effective('MODEL_NAME') });
+      } catch (error) { return send(response, 502, { error: error.message, models: [] }); }
+    }); return;
   }
   if (request.url === '/api/weather' && request.method === 'POST') {
     let body = ''; request.on('data', chunk => body += chunk); request.on('end', async () => { try { send(response, 200, await weatherForecast(JSON.parse(body))); } catch (error) { send(response, 502, { error: error.message, weather: {} }); } }); return;
