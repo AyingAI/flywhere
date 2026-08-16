@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 私下报告安全问题
+    url: https://github.com/AyingAI/flywhere/security/advisories/new
+    about: 不要在公开 Issue 中提交密钥或漏洞利用细节

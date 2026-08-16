@@ -9,11 +9,23 @@ const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || '127.0.0.1';
 const configPath = path.join(__dirname, '.flymap-config.json');
 let localConfig = loadLocalConfig();
-const feePolicy = { airportConstruction: 50, fuelSurcharge: 60, updatedAt: '2026-08-09', source: 'FlyAI 未返回费用明细时的预算兜底' };
+const feePolicy = { airportConstruction: 50, shortHaulFuelSurcharge: 40, longHaulFuelSurcharge: 70, thresholdKm: 800, updatedAt: '2026-08-05', source: '按航段大圆距离估算；FlyAI 返回实际费用时以接口为准' };
+const airportCoordinates = {
+  CAN: [113.30, 23.39], SZX: [113.81, 22.64], ZUH: [113.38, 22.01], FUO: [113.07, 23.08], HKG: [113.92, 22.31], MFM: [113.59, 22.15],
+  PEK: [116.60, 40.08], PKX: [116.41, 39.51], BJS: [116.40, 39.90], SHA: [121.34, 31.20], PVG: [121.80, 31.14],
+  CTU: [103.95, 30.58], TFU: [104.44, 30.31], CKG: [106.64, 29.72], XIY: [108.75, 34.45], KMG: [102.93, 25.10],
+  XMN: [118.13, 24.54], FOC: [119.66, 25.93], HAK: [110.46, 19.94], SYX: [109.41, 18.30], HGH: [120.43, 30.23],
+  NKG: [118.86, 31.74], WUH: [114.21, 30.78], CSX: [113.22, 28.19], CGO: [113.84, 34.52], TAO: [120.37, 36.27],
+  DLC: [121.54, 38.97], SHE: [123.48, 41.64], HRB: [126.25, 45.62], URC: [87.47, 43.91], KHG: [76.02, 39.54],
+  LHW: [103.62, 36.51], XNN: [101.45, 36.53], LXA: [90.91, 29.30], NNG: [108.17, 22.61], KWE: [106.80, 26.54]
+};
+const cityCoordinates = { 喀什: airportCoordinates.KHG, 北京: airportCoordinates.BJS, 广州: airportCoordinates.CAN, 上海: airportCoordinates.SHA, 成都: airportCoordinates.CTU, 深圳: airportCoordinates.SZX };
 const chinaMapUrl = 'https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json';
 const echartsUrl = 'https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js';
+const brandLogoUrl = 'https://gitee.com/ayingsxcw/gameimg/raw/master/img/20260811074953392.webp';
 let chinaMapCache = { expiresAt: 0, data: null };
 let echartsSourceCache = '';
+let brandLogoCache = { expiresAt: 0, contentType: 'image/webp', data: null };
 const flyaiCache = new Map();
 const flyaiInflight = new Map();
 let flyaiQueue = Promise.resolve();
@@ -26,7 +38,7 @@ const securityHeaders = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
   'Referrer-Policy': 'no-referrer',
-  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://gitee.com https://raw.giteeusercontent.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 };
 
 function loadEnv() {
@@ -158,7 +170,8 @@ async function detectCli(id) {
 }
 
 async function publicSettings() {
-  const cli = await Promise.all(Object.keys(cliDefinitions).map(detectCli));
+  const detectedCli = await Promise.all(Object.keys(cliDefinitions).map(detectCli));
+  const cli = detectedCli.map(({ path: _localPath, ...status }) => status);
   let flyaiCliInstalled = false;
   try { flyaiCliInstalled = Boolean(await execCapture('which', ['flyai'])); } catch {}
   const aiApiKey = effective('AI_API_KEY');
@@ -213,6 +226,17 @@ async function getEchartsSource() {
   if (!response.ok) throw new Error(`地图组件读取失败（HTTP ${response.status}）`);
   echartsSourceCache = await response.text();
   return echartsSourceCache;
+}
+
+async function getBrandLogo() {
+  if (brandLogoCache.data && brandLogoCache.expiresAt > Date.now()) return brandLogoCache;
+  const response = await fetch(brandLogoUrl, { redirect: 'follow', signal: AbortSignal.timeout(15000) });
+  if (!response.ok) throw new Error(`Logo 读取失败（HTTP ${response.status}）`);
+  const contentType = String(response.headers.get('content-type') || 'image/webp').split(';')[0];
+  if (!contentType.startsWith('image/')) throw new Error('Logo 源文件不是图片');
+  const data = Buffer.from(await response.arrayBuffer());
+  brandLogoCache = { expiresAt: Date.now() + 24 * 60 * 60 * 1000, contentType, data };
+  return brandLogoCache;
 }
 
 function wait(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
@@ -374,6 +398,37 @@ function durationMinutes(raw) {
   const minutes = Number(String(raw ?? '').replace(/[^0-9.]/g, ''));
   return Number.isFinite(minutes) ? minutes : 0;
 }
+
+function segmentCoordinate(segment, side) {
+  const stationCode = String(segment?.[`${side}StationCode`] || '').toUpperCase();
+  const cityCode = String(segment?.[`${side}CityCode`] || '').toUpperCase();
+  const cityName = String(segment?.[`${side}CityName`] || '').trim();
+  return airportCoordinates[stationCode] || airportCoordinates[cityCode] || cityCoordinates[cityName] || null;
+}
+
+function greatCircleDistanceKm(from, to) {
+  if (!from || !to) return null;
+  const radians = value => value * Math.PI / 180;
+  const [fromLongitude, fromLatitude] = from, [toLongitude, toLatitude] = to;
+  const latitudeDelta = radians(toLatitude - fromLatitude);
+  const longitudeDelta = radians(toLongitude - fromLongitude);
+  const arc = Math.sin(latitudeDelta / 2) ** 2 + Math.cos(radians(fromLatitude)) * Math.cos(radians(toLatitude)) * Math.sin(longitudeDelta / 2) ** 2;
+  return Math.round(6371 * 2 * Math.atan2(Math.sqrt(arc), Math.sqrt(1 - arc)));
+}
+
+function estimatedSegmentFee(segment) {
+  const distanceKm = greatCircleDistanceKm(segmentCoordinate(segment, 'dep'), segmentCoordinate(segment, 'arr'));
+  if (!Number.isFinite(distanceKm)) return null;
+  const fuelSurcharge = distanceKm <= feePolicy.thresholdKm ? feePolicy.shortHaulFuelSurcharge : feePolicy.longHaulFuelSurcharge;
+  return { distanceKm, amount: feePolicy.airportConstruction + fuelSurcharge };
+}
+
+function estimatedJourneyFee(segments) {
+  const fees = segments.map(estimatedSegmentFee);
+  if (!fees.length || fees.some(fee => !fee)) return null;
+  return { amount: fees.reduce((total, fee) => total + fee.amount, 0), distanceKm: fees.reduce((total, fee) => total + fee.distanceKm, 0), segments: fees };
+}
+
 function normalize(data) {
   return (data?.data?.itemList || []).map(item => {
     const journey = item?.journeys?.[0];
@@ -382,7 +437,7 @@ function normalize(data) {
     const flightMinutes = segments.reduce((total, segment) => total + durationMinutes(segment?.duration), 0);
     const elapsedMinutes = durationMinutes(journey?.totalDuration || item?.totalDuration) || flightMinutes;
     const airlines = [...new Set(segments.map(segment => segment?.marketingTransportName).filter(Boolean))].join(' / ');
-    return { item, city: last?.arrCityName, code: last?.arrCityCode, date: first?.depDateTime?.slice(0, 10), time: first?.depDateTime?.slice(11, 16), arrivalTime: last?.arrDateTime?.slice(11, 16), airline: airlines, flightMinutes, elapsedMinutes, layoverMinutes: Math.max(0, elapsedMinutes - flightMinutes), duration: Number((flightMinutes / 60).toFixed(1)), direct: journey?.journeyType === '直达', fare: value(item, ['ticketPrice', 'adultPrice', 'price']), fee: value(item, ['taxFee', 'tax', 'fuelSurcharge', 'airportConstructionFee', 'airportFee']), jumpUrl: item.jumpUrl };
+    return { item, city: last?.arrCityName, code: last?.arrCityCode, date: first?.depDateTime?.slice(0, 10), time: first?.depDateTime?.slice(11, 16), arrivalTime: last?.arrDateTime?.slice(11, 16), airline: airlines, flightMinutes, elapsedMinutes, layoverMinutes: Math.max(0, elapsedMinutes - flightMinutes), duration: Number((flightMinutes / 60).toFixed(1)), direct: journey?.journeyType === '直达', fare: value(item, ['ticketPrice', 'adultPrice', 'price']), fee: value(item, ['taxFee', 'tax']), estimatedFee: estimatedJourneyFee(segments), jumpUrl: item.jumpUrl };
   }).filter(item => item.city && item.code && item.date && item.time && item.fare !== null);
 }
 function inTime(time, start, end) { return !start || !end || time >= start && time <= end; }
@@ -408,7 +463,11 @@ function validateTripDates(query) {
     const error = new Error('回程日期不能早于出发日期'); error.statusCode = 400; throw error;
   }
 }
-function airportFee(item) { return item.fee === null ? { amount: feePolicy.airportConstruction + feePolicy.fuelSurcharge, source: '预估' } : { amount: item.fee, source: '接口' }; }
+function airportFee(item) {
+  if (item.fee !== null) return { amount: item.fee, source: '接口', distanceKm: null };
+  if (item.estimatedFee) return { amount: item.estimatedFee.amount, source: '航程估算', distanceKm: item.estimatedFee.distanceKm, segments: item.estimatedFee.segments };
+  return { amount: feePolicy.airportConstruction + feePolicy.longHaulFuelSurcharge, source: '兜底估算', distanceKm: null };
+}
 function uniqueFlights(flights) {
   const seen = new Set();
   return flights.filter(flight => {
@@ -479,7 +538,7 @@ async function search(query) {
 function parseAiJson(content) {
   const clean = String(content || '').replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
   const start = clean.indexOf('{'); const end = clean.lastIndexOf('}');
-  if (start < 0 || end <= start) throw new Error('AI 未返回有效排序');
+  if (start < 0 || end <= start) throw new Error('AI 未返回有效建议');
   return JSON.parse(clean.slice(start, end + 1));
 }
 
@@ -527,32 +586,54 @@ async function runAiCli(prompt, cli, model) {
   throw new Error(`暂不支持通过 ${status.label} 调用 AI`);
 }
 
-async function aiRank(payload) {
+function normalizeAiAdvice(result, candidates) {
+  const availableIds = new Set((candidates || []).map(item => item.id));
+  const defaults = ['优先考虑', '最省钱', '少折腾'];
+  const advice = (Array.isArray(result?.advice) ? result.advice : [])
+    .filter(item => item && availableIds.has(item.id))
+    .slice(0, 3)
+    .map((item, index) => ({
+      id: item.id,
+      label: String(item.label || defaults[index] || '建议').slice(0, 12),
+      reason: String(item.reason || '').slice(0, 80),
+    }));
+  return { summary: String(result?.summary || '').slice(0, 120), advice };
+}
+
+async function aiAdvice(payload) {
   const mode = localConfig.aiMode || 'api';
   const model = payload.model || effective('MODEL_NAME');
-  const prompt = `你是机票决策助手。请根据用户偏好给候选航班组合排序，不要创造数据。偏好：${JSON.stringify(payload.preferences)}。候选：${JSON.stringify(payload.results)}。只返回 JSON：{\"order\":[候选id按推荐顺序],\"reasons\":{\"候选id\":\"不超过18字的理由\"}}。必须使用每条候选中的 id，不能用城市 code。优先考虑时间合适、直飞、较短、价格合理；如果用户没有明确排除，不要因为廉航自动淘汰。`;
+  const candidates = Array.isArray(payload.results) ? payload.results : [];
+  if (!candidates.length) throw new Error('没有可供 AI 分析的航班组合');
+  const prompt = `你是机票决策助手。请分析以下真实航班候选，为用户给出可并列比较的建议。不要筛选、不要修改排序、不要创造或推测数据。请从候选中分别选择：优先考虑（平衡总价、总行程、直飞）、最省钱（总价最低）、少折腾（优先直飞和较短总行程；没有直飞时说明取舍）。仅返回 JSON：{"summary":"一句不超过50字的整体建议","advice":[{"label":"优先考虑","id":"候选id","reason":"不超过40字，具体说明价格、时长、直飞等取舍"},{"label":"最省钱","id":"候选id","reason":"不超过40字"},{"label":"少折腾","id":"候选id","reason":"不超过40字"}]}。每个 id 必须来自候选中的 id；候选不足三个时允许复用。不要把“已配对”当作理由。候选：${JSON.stringify(candidates)}。`;
   if (mode === 'cli') {
     const cli = localConfig.aiCli || 'codex';
-    const result = parseAiJson(await runAiCli(prompt, cli, model));
+    const result = normalizeAiAdvice(parseAiJson(await runAiCli(prompt, cli, model)), candidates);
+    if (!result.advice.length) throw new Error('AI 未返回可用建议');
     return { ...result, model: model || cliDefinitions[cli].label, channel: cli };
   }
   const apiKey = effective('AI_API_KEY');
   if (!apiKey) throw new Error('未配置 OpenAI 兼容接口地址或 API Key');
   if (!model) throw new Error('请选择一个 AI 模型');
   const response = await fetch(openAiCompatibleUrl('chat/completions'), { method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${apiKey}`}, body:JSON.stringify({model, temperature:0.2, messages:[{role:'user', content:prompt}]}) });
-  if (!response.ok) throw new Error(`AI 排序请求失败（HTTP ${response.status}）`);
+  if (!response.ok) throw new Error(`AI 建议请求失败（HTTP ${response.status}）`);
   const data = await response.json(); const content = data?.choices?.[0]?.message?.content || '';
-  return { ...parseAiJson(content), model, channel: 'api' };
+  const result = normalizeAiAdvice(parseAiJson(content), candidates);
+  if (!result.advice.length) throw new Error('AI 未返回可用建议');
+  return { ...result, model, channel: 'api' };
 }
 function makeResult(outbound, inbound, query) {
   const people = Math.max(1, Number(query.passengers || 1));
   const outboundFee = airportFee(outbound); const inboundFee = inbound ? airportFee(inbound) : { amount: 0, source: '预估' };
+  const feeItems = [outboundFee, inboundFee].filter(item => item.amount > 0);
+  const feeSources = [...new Set(feeItems.map(item => item.source))];
+  const feeDistanceKm = feeItems.every(item => Number.isFinite(item.distanceKm)) ? feeItems.reduce((total, item) => total + item.distanceKm, 0) : null;
   const perPerson = outbound.fare + (inbound?.fare || 0) + outboundFee.amount + inboundFee.amount;
   const id = [outbound.code, outbound.airline, outbound.date, outbound.time, inbound?.airline || '', inbound?.date || '', inbound?.time || ''].join('::');
   const flightMinutes = outbound.flightMinutes + (inbound?.flightMinutes || 0);
   const journeyMinutes = outbound.elapsedMinutes + (inbound?.elapsedMinutes || 0);
   const transferWaitMinutes = outbound.layoverMinutes + (inbound?.layoverMinutes || 0);
-  return { id, city: outbound.city, code: outbound.code, date: outbound.date, backDate: inbound?.date, outboundAirline: outbound.airline, inboundAirline: inbound?.airline || '', airline: inbound ? `${outbound.airline} / ${inbound.airline}` : outbound.airline, out: outbound.time, outArr: outbound.arrivalTime || '—', back: inbound?.time || '—', backArr: inbound?.arrivalTime || '—', outboundDirect: outbound.direct, inboundDirect: inbound?.direct ?? true, duration: Number((flightMinutes / 60).toFixed(1)), journeyDuration: Number((journeyMinutes / 60).toFixed(1)), transferWait: Number((transferWaitMinutes / 60).toFixed(1)), direct: outbound.direct && (!inbound || inbound.direct), fare: outbound.fare + (inbound?.fare || 0), fees: outboundFee.amount + inboundFee.amount, feeSource: outboundFee.source === '接口' && inboundFee.source === '接口' ? '接口' : '预估', perPerson: Math.round(perPerson), totalPrice: Math.round(perPerson * people), jumpUrl: outbound.jumpUrl };
+  return { id, city: outbound.city, code: outbound.code, date: outbound.date, backDate: inbound?.date, outboundAirline: outbound.airline, inboundAirline: inbound?.airline || '', airline: inbound ? `${outbound.airline} / ${inbound.airline}` : outbound.airline, out: outbound.time, outArr: outbound.arrivalTime || '—', back: inbound?.time || '—', backArr: inbound?.arrivalTime || '—', outboundDirect: outbound.direct, inboundDirect: inbound?.direct ?? true, duration: Number((flightMinutes / 60).toFixed(1)), journeyDuration: Number((journeyMinutes / 60).toFixed(1)), transferWait: Number((transferWaitMinutes / 60).toFixed(1)), direct: outbound.direct && (!inbound || inbound.direct), fare: outbound.fare + (inbound?.fare || 0), fees: outboundFee.amount + inboundFee.amount, feeSource: feeSources.join(' + '), feeDistanceKm, perPerson: Math.round(perPerson), totalPrice: Math.round(perPerson * people), jumpUrl: outbound.jumpUrl };
 }
 
 function requestAllowed(request) {
@@ -578,6 +659,13 @@ const server = http.createServer(async (request, response) => {
   if (request.url === '/vendor/echarts.min.js' && request.method === 'GET') {
     try { response.writeHead(200, { ...securityHeaders, 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=86400' }); return response.end(await getEchartsSource()); }
     catch (error) { response.writeHead(502, { ...securityHeaders, 'Content-Type': 'application/javascript; charset=utf-8' }); return response.end(`console.error(${JSON.stringify(error.message)})`); }
+  }
+  if (request.url === '/assets/brand-logo' && request.method === 'GET') {
+    try {
+      const logo = await getBrandLogo();
+      response.writeHead(200, { ...securityHeaders, 'Content-Type': logo.contentType, 'Cache-Control': 'public, max-age=86400' });
+      return response.end(logo.data);
+    } catch (error) { return send(response, 502, { error: error.message }); }
   }
   if (request.url === '/api/settings' && request.method === 'GET') {
     try { return send(response, 200, await publicSettings()); }
@@ -612,8 +700,18 @@ const server = http.createServer(async (request, response) => {
   if (request.url === '/api/weather' && request.method === 'POST') {
     let body = ''; request.on('data', chunk => body += chunk); request.on('end', async () => { try { send(response, 200, await weatherForecast(JSON.parse(body))); } catch (error) { send(response, 502, { error: error.message, weather: {} }); } }); return;
   }
-  if (request.url === '/api/ai-rank' && request.method === 'POST') {
-    let body = ''; request.on('data', chunk => body += chunk); request.on('end', async () => { try { send(response, 200, await aiRank(JSON.parse(body))); } catch (error) { send(response, 502, { error: error.message }); } }); return;
+  if (request.url === '/api/geocode' && request.method === 'POST') {
+    let body = ''; request.on('data', chunk => body += chunk); request.on('end', async () => {
+      try {
+        const city = String(JSON.parse(body).city || '').trim();
+        const location = await resolveWeatherLocation({ city });
+        if (!location) return send(response, 404, { error: '暂时无法定位该出发地' });
+        return send(response, 200, { city, longitude: location.longitude, latitude: location.latitude });
+      } catch (error) { return send(response, 502, { error: error.message }); }
+    }); return;
+  }
+  if (request.url === '/api/ai-advice' && request.method === 'POST') {
+    let body = ''; request.on('data', chunk => body += chunk); request.on('end', async () => { try { send(response, 200, await aiAdvice(JSON.parse(body))); } catch (error) { send(response, 502, { error: error.message }); } }); return;
   }
   if (request.url === '/api/search' && request.method === 'POST') {
     let body = ''; request.on('data', chunk => body += chunk); request.on('end', async () => { try { send(response, 200, { results: await search(JSON.parse(body)) }); } catch (error) { send(response, error.statusCode || 502, { error: error.message }); } }); return;

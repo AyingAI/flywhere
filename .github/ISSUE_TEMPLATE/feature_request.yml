@@ -1,0 +1,25 @@
+name: 功能建议
+description: 提出能改善目的地决策体验的想法
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 使用场景
+      description: 你在什么情况下遇到了什么问题？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+      description: 你希望产品如何帮助你完成决定？
+    validations:
+      required: true
+  - type: textarea
+    id: tradeoffs
+    attributes:
+      label: 可能的取舍
+      description: 是否会增加请求次数、配置成本、信息密度或隐私风险？
