@@ -20,6 +20,14 @@ const airportCoordinates = {
   LHW: [103.62, 36.51], XNN: [101.45, 36.53], LXA: [90.91, 29.30], NNG: [108.17, 22.61], KWE: [106.80, 26.54]
 };
 const cityCoordinates = { 喀什: airportCoordinates.KHG, 北京: airportCoordinates.BJS, 广州: airportCoordinates.CAN, 上海: airportCoordinates.SHA, 成都: airportCoordinates.CTU, 深圳: airportCoordinates.SZX };
+const domesticExplorationCities = [
+  '北京', '上海', '成都', '重庆', '昆明', '西安', '厦门', '福州', '泉州', '海口', '三亚', '杭州', '南京', '宁波', '温州', '武汉', '长沙', '郑州', '青岛', '济南',
+  '大连', '沈阳', '长春', '哈尔滨', '贵阳', '桂林', '南宁', '北海', '珠海', '兰州', '西宁', '银川', '乌鲁木齐', '喀什', '拉萨', '大理', '丽江', '西双版纳',
+  '南昌', '合肥', '太原', '石家庄', '呼和浩特', '烟台', '威海', '张家界', '宜昌', '徐州', '无锡', '常州', '扬州', '台州', '揭阳', '湛江', '惠州',
+  '香港', '澳门', '台北', '高雄'
+];
+const domesticCitySet = new Set(['广州', '深圳', ...domesticExplorationCities]);
+const explorationDestinationLimit = 10;
 const chinaMapUrl = 'https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json';
 const echartsUrl = 'https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js';
 const brandLogoUrl = 'https://gitee.com/ayingsxcw/gameimg/raw/master/img/20260811074953392.webp';
@@ -478,6 +486,27 @@ function uniqueFlights(flights) {
   });
 }
 
+function normalizedDomesticCityName(value) {
+  return String(value || '').trim().replace(/^中国/, '').replace(/(?:特别行政区|市)$/, '');
+}
+
+function isDomesticDestination(item) {
+  return domesticCitySet.has(normalizedDomesticCityName(item?.city));
+}
+
+function stableExplorationTargets(query, existingCities) {
+  const origin = normalizedDomesticCityName(query.origin || '广州');
+  const pool = domesticExplorationCities.filter(city => city !== origin && !existingCities.has(city));
+  const seed = `${origin}|${query.depDate || ''}|${query.backDate || ''}`;
+  const hash = [...seed].reduce((value, character) => ((value * 31) + character.charCodeAt(0)) >>> 0, 0);
+  const offset = pool.length ? hash % pool.length : 0;
+  return [...pool.slice(offset), ...pool.slice(0, offset)];
+}
+
+function domesticPriceSort(a, b) {
+  return Number(!isDomesticDestination(a)) - Number(!isDomesticDestination(b)) || Number(a.totalPrice ?? a.fare) - Number(b.totalPrice ?? b.fare);
+}
+
 function searchCacheKey(query) {
   return JSON.stringify({ origin: query.origin || '广州', destination: query.destination || 'all', trip: query.trip || 'round', depDate: query.depDate, backDate: query.backDate || '', outTimeStart: query.outTimeStart || '', outTimeEnd: query.outTimeEnd || '', backTimeStart: query.backTimeStart || '', backTimeEnd: query.backTimeEnd || '', model: query.model || effective('MODEL_NAME') });
 }
@@ -494,15 +523,22 @@ async function searchFresh(query) {
   const successful = outboundSearches.filter(item => item.status === 'fulfilled').map(item => item.value);
   if (!successful.length) throw outboundSearches[0]?.reason || new Error('航班查询没有返回结果');
   const outboundNormalized = successful.flatMap(normalize);
+  if (!destination) {
+    const existingDomesticCities = new Set(outboundNormalized.filter(isDomesticDestination).map(item => normalizedDomesticCityName(item.city)));
+    const needed = Math.max(0, explorationDestinationLimit - existingDomesticCities.size);
+    const targets = stableExplorationTargets(query, existingDomesticCities).slice(0, needed);
+    const supplements = await Promise.allSettled(targets.map(city => runFlyai([...common, '--sort-type', '3', '--destination', city, ...dateArgs(query, 'dep')], model)));
+    outboundNormalized.push(...supplements.filter(item => item.status === 'fulfilled').flatMap(item => normalize(item.value)));
+  }
   const outbound = outboundNormalized.filter(f => inTime(f.time, query.outTimeStart, query.outTimeEnd) && reasonableItinerary(f));
   const groups = new Map();
   outbound.forEach(f => {
     if (!groups.has(f.code)) groups.set(f.code, []);
     groups.get(f.code).push(f);
   });
-  const destinations = [...groups.values()].sort((a, b) => Math.min(...a.map(item => item.fare)) - Math.min(...b.map(item => item.fare)) || Math.min(...a.map(item => item.duration)) - Math.min(...b.map(item => item.duration))).map(uniqueFlights);
+  const destinations = [...groups.values()].sort((a, b) => Number(!isDomesticDestination(a[0])) - Number(!isDomesticDestination(b[0])) || Math.min(...a.map(item => item.fare)) - Math.min(...b.map(item => item.fare)) || Math.min(...a.map(item => item.duration)) - Math.min(...b.map(item => item.duration))).map(uniqueFlights);
   if (query.trip === 'oneway') {
-    return destinations.flat().map(f => makeResult(f, null, query)).sort((a, b) => a.totalPrice - b.totalPrice).map((item, index) => ({ ...item, rank: index + 1 }));
+    return destinations.flat().map(f => makeResult(f, null, query)).sort(domesticPriceSort).map((item, index) => ({ ...item, rank: index + 1 }));
   }
   const results = [];
   for (const outboundOptions of destinations) {
@@ -510,14 +546,17 @@ async function searchFresh(query) {
       const inboundArgs = ['--origin', outboundItem.code, '--destination', origin, '--sort-type', '3', ...dateArgs(query, 'back')];
       if (query.backTimeStart) inboundArgs.push('--dep-hour-start', String(Number(query.backTimeStart.slice(0, 2))));
       if (query.backTimeEnd) inboundArgs.push('--dep-hour-end', String(Number(query.backTimeEnd.slice(0, 2))));
-      const inboundOptions = uniqueFlights(normalize(await runFlyai(inboundArgs)).filter(f => inTime(f.time, query.backTimeStart, query.backTimeEnd) && reasonableItinerary(f)));
+      let inboundData;
+      try { inboundData = await runFlyai(inboundArgs); }
+      catch { continue; }
+      const inboundOptions = uniqueFlights(normalize(inboundData).filter(f => inTime(f.time, query.backTimeStart, query.backTimeEnd) && reasonableItinerary(f)));
       const combinations = [];
       for (const out of outboundOptions) for (const back of inboundOptions) {
         if (out.layoverMinutes + back.layoverMinutes <= 4 * 60) combinations.push(makeResult(out, back, query));
       }
       results.push(...combinations);
   }
-  return results.filter(Boolean).sort((a, b) => a.totalPrice - b.totalPrice).map((item, index) => ({ ...item, rank: index + 1 }));
+  return results.filter(Boolean).sort(domesticPriceSort).map((item, index) => ({ ...item, rank: index + 1 }));
 }
 
 async function search(query) {
@@ -633,7 +672,7 @@ function makeResult(outbound, inbound, query) {
   const flightMinutes = outbound.flightMinutes + (inbound?.flightMinutes || 0);
   const journeyMinutes = outbound.elapsedMinutes + (inbound?.elapsedMinutes || 0);
   const transferWaitMinutes = outbound.layoverMinutes + (inbound?.layoverMinutes || 0);
-  return { id, city: outbound.city, code: outbound.code, date: outbound.date, backDate: inbound?.date, outboundAirline: outbound.airline, inboundAirline: inbound?.airline || '', airline: inbound ? `${outbound.airline} / ${inbound.airline}` : outbound.airline, out: outbound.time, outArr: outbound.arrivalTime || '—', back: inbound?.time || '—', backArr: inbound?.arrivalTime || '—', outboundDirect: outbound.direct, inboundDirect: inbound?.direct ?? true, duration: Number((flightMinutes / 60).toFixed(1)), journeyDuration: Number((journeyMinutes / 60).toFixed(1)), transferWait: Number((transferWaitMinutes / 60).toFixed(1)), direct: outbound.direct && (!inbound || inbound.direct), fare: outbound.fare + (inbound?.fare || 0), fees: outboundFee.amount + inboundFee.amount, feeSource: feeSources.join(' + '), feeDistanceKm, perPerson: Math.round(perPerson), totalPrice: Math.round(perPerson * people), jumpUrl: outbound.jumpUrl };
+  return { id, city: outbound.city, code: outbound.code, domestic: isDomesticDestination(outbound), date: outbound.date, backDate: inbound?.date, outboundAirline: outbound.airline, inboundAirline: inbound?.airline || '', airline: inbound ? `${outbound.airline} / ${inbound.airline}` : outbound.airline, out: outbound.time, outArr: outbound.arrivalTime || '—', back: inbound?.time || '—', backArr: inbound?.arrivalTime || '—', outboundDirect: outbound.direct, inboundDirect: inbound?.direct ?? true, duration: Number((flightMinutes / 60).toFixed(1)), journeyDuration: Number((journeyMinutes / 60).toFixed(1)), transferWait: Number((transferWaitMinutes / 60).toFixed(1)), direct: outbound.direct && (!inbound || inbound.direct), fare: outbound.fare + (inbound?.fare || 0), fees: outboundFee.amount + inboundFee.amount, feeSource: feeSources.join(' + '), feeDistanceKm, perPerson: Math.round(perPerson), totalPrice: Math.round(perPerson * people), jumpUrl: outbound.jumpUrl };
 }
 
 function requestAllowed(request) {
