@@ -8,6 +8,8 @@
 
 网页中的飞猪与 AI Key 由本机 Node 服务写入 `.flymap-config.json`，文件权限为 `0600`，并已加入 `.gitignore`。设置查询接口只返回是否配置和固定掩码，不返回原始 Key。
 
+macOS 桌面版把设置写入当前用户的 Application Support 目录，API Key 使用 Electron `safeStorage` 与 macOS Keychain 加密后再落盘，文件权限同样为 `0600`。应用不会把 Key 明文返回给渲染页面。
+
 不要提交以下文件：
 
 - `.env`

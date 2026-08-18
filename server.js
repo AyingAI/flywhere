@@ -5,9 +5,12 @@ const os = require('os');
 const { execFile } = require('child_process');
 
 loadEnv();
-const port = Number(process.env.PORT || 4173);
-const host = process.env.HOST || '127.0.0.1';
-const configPath = path.join(__dirname, '.flymap-config.json');
+const defaultPort = Number(process.env.PORT || 4173);
+const defaultHost = process.env.HOST || '127.0.0.1';
+const desktopMode = process.env.FLYWHERE_DESKTOP === '1';
+const bundledFlyaiPath = process.env.FLYAI_CLI_PATH || '';
+const configPath = process.env.FLYWHERE_CONFIG_PATH ? path.resolve(process.env.FLYWHERE_CONFIG_PATH) : path.join(__dirname, '.flymap-config.json');
+const encryptedValuePrefix = 'safe-storage:';
 let localConfig = loadLocalConfig();
 const feePolicy = { airportConstruction: 50, shortHaulFuelSurcharge: 40, longHaulFuelSurcharge: 70, thresholdKm: 800, updatedAt: '2026-08-05', source: '按航段大圆距离估算；FlyAI 返回实际费用时以接口为准' };
 const airportCoordinates = {
@@ -36,6 +39,7 @@ let echartsSourceCache = '';
 let brandLogoCache = { expiresAt: 0, contentType: 'image/webp', data: null };
 const flyaiCache = new Map();
 const flyaiInflight = new Map();
+let flyaiRunner = null;
 let flyaiQueue = Promise.resolve();
 let flyaiNextRunAt = 0;
 const searchCache = new Map();
@@ -50,6 +54,7 @@ const securityHeaders = {
 };
 
 function loadEnv() {
+  if (process.env.FLYWHERE_DESKTOP === '1') return;
   const envPath = path.join(__dirname, '.env');
   if (!fs.existsSync(envPath)) return;
   for (const line of fs.readFileSync(envPath, 'utf8').split(/\r?\n/)) {
@@ -67,12 +72,41 @@ function loadLocalConfig() {
 function effective(name) {
   const mapping = { FLYAI_API_KEY: 'flyaiApiKey', AI_BASE_URL: 'aiBaseUrl', AI_API_KEY: 'aiApiKey', MODEL_NAME: 'model' };
   const key = mapping[name];
-  return Object.prototype.hasOwnProperty.call(localConfig, key) ? localConfig[key] : (process.env[name] || '');
+  if (!Object.prototype.hasOwnProperty.call(localConfig, key)) return process.env[name] || '';
+  return ['flyaiApiKey', 'aiApiKey'].includes(key) ? decryptStoredSecret(localConfig[key]) : localConfig[key];
+}
+
+function safeStorage() {
+  if (!desktopMode) return null;
+  const storage = require('electron').safeStorage;
+  if (!storage.isEncryptionAvailable()) throw new Error('macOS Keychain 当前不可用，无法安全保存 API Key');
+  return storage;
+}
+
+function decryptStoredSecret(value) {
+  const stored = String(value || '');
+  if (!stored.startsWith(encryptedValuePrefix)) return stored;
+  try {
+    return safeStorage().decryptString(Buffer.from(stored.slice(encryptedValuePrefix.length), 'base64'));
+  } catch {
+    return '';
+  }
+}
+
+function encryptSecret(value) {
+  const plain = decryptStoredSecret(value);
+  if (!plain || !desktopMode) return plain;
+  return `${encryptedValuePrefix}${safeStorage().encryptString(plain).toString('base64')}`;
 }
 
 function writeLocalConfig(next) {
-  localConfig = next;
-  fs.writeFileSync(configPath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+  const stored = { ...next };
+  for (const key of ['flyaiApiKey', 'aiApiKey']) {
+    if (Object.prototype.hasOwnProperty.call(stored, key)) stored[key] = encryptSecret(stored[key]);
+  }
+  localConfig = stored;
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 });
   fs.chmodSync(configPath, 0o600);
   modelsCache = { expiresAt: 0, models: [] };
 }
@@ -87,6 +121,7 @@ function execCapture(command, args, options = {}) {
 }
 
 async function installFlyaiCli() {
+  if (desktopMode && bundledFlyaiPath) return;
   try {
     await execCapture('npm', ['--version']);
   } catch {
@@ -178,14 +213,15 @@ async function detectCli(id) {
 }
 
 async function publicSettings() {
-  const detectedCli = await Promise.all(Object.keys(cliDefinitions).map(detectCli));
+  const detectedCli = desktopMode ? [] : await Promise.all(Object.keys(cliDefinitions).map(detectCli));
   const cli = detectedCli.map(({ path: _localPath, ...status }) => status);
-  let flyaiCliInstalled = false;
-  try { flyaiCliInstalled = Boolean(await execCapture('which', ['flyai'])); } catch {}
+  let flyaiCliInstalled = Boolean(bundledFlyaiPath && fs.existsSync(bundledFlyaiPath));
+  if (!flyaiCliInstalled) try { flyaiCliInstalled = Boolean(await execCapture('which', ['flyai'])); } catch {}
   const aiApiKey = effective('AI_API_KEY');
   const flyaiApiKey = effective('FLYAI_API_KEY');
   return {
-    aiMode: localConfig.aiMode || 'api',
+    desktopApp: desktopMode,
+    aiMode: desktopMode ? 'api' : (localConfig.aiMode || 'api'),
     aiCli: localConfig.aiCli || 'codex',
     aiBaseUrl: effective('AI_BASE_URL'),
     model: effective('MODEL_NAME'),
@@ -200,7 +236,8 @@ async function publicSettings() {
 
 function saveSettings(payload) {
   const next = { ...localConfig };
-  if (payload.aiMode === 'api' || payload.aiMode === 'cli') next.aiMode = payload.aiMode;
+  if (desktopMode) next.aiMode = 'api';
+  else if (payload.aiMode === 'api' || payload.aiMode === 'cli') next.aiMode = payload.aiMode;
   if (cliDefinitions[payload.aiCli]) next.aiCli = payload.aiCli;
   if (typeof payload.aiBaseUrl === 'string') {
     const aiBaseUrl = payload.aiBaseUrl.trim();
@@ -317,10 +354,15 @@ async function weatherForecast(payload) {
 }
 
 function runFlyaiOnce(args, model) {
+  const apiKey = effective('FLYAI_API_KEY');
+  if (flyaiRunner) return flyaiRunner({ args, model, apiKey });
   return new Promise((resolve, reject) => {
-    const env = { ...process.env, FLYAI_API_KEY: effective('FLYAI_API_KEY') };
+    const env = { ...process.env, FLYAI_API_KEY: apiKey };
     if (model) env.MODEL_NAME = model;
-    execFile('flyai', ['search-flight', ...args], { env, timeout: 90000, maxBuffer: 12 * 1024 * 1024 }, (error, stdout, stderr) => {
+    const command = bundledFlyaiPath ? process.execPath : 'flyai';
+    const commandArgs = bundledFlyaiPath ? [bundledFlyaiPath, 'search-flight', ...args] : ['search-flight', ...args];
+    if (bundledFlyaiPath && process.versions.electron) env.ELECTRON_RUN_AS_NODE = '1';
+    execFile(command, commandArgs, { env, timeout: 90000, maxBuffer: 12 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (error) return reject(new Error(stderr.trim() || error.message));
       try { resolve(JSON.parse(stdout)); } catch { reject(new Error('FlyAI 返回了无法解析的数据')); }
     });
@@ -688,7 +730,7 @@ function requestAllowed(request) {
   } catch { return false; }
 }
 
-const server = http.createServer(async (request, response) => {
+function createServer() { return http.createServer(async (request, response) => {
   if (!requestAllowed(request)) return send(response, 403, { error: '仅接受来自当前页面的 JSON 请求' });
   if (request.url === '/api/fee-policy') return send(response, 200, feePolicy);
   if (request.url === '/api/china-map' && request.method === 'GET') {
@@ -760,6 +802,31 @@ const server = http.createServer(async (request, response) => {
     return fs.createReadStream(path.join(__dirname, 'index.html')).pipe(response);
   }
   send(response, 404, { error: 'Not found' });
-});
+}); }
 function send(response, status, data) { response.writeHead(status, { ...securityHeaders, 'Content-Type': 'application/json; charset=utf-8' }); response.end(JSON.stringify(data)); }
-server.listen(port, host, () => console.log(`飞哪里 FlyWhere running at http://${host}:${port}`));
+
+function startServer(options = {}) {
+  const host = options.host || defaultHost;
+  const port = Number.isFinite(options.port) ? options.port : defaultPort;
+  flyaiRunner = typeof options.flyaiRunner === 'function' ? options.flyaiRunner : null;
+  const server = createServer();
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, host, () => {
+      server.off('error', reject);
+      const address = server.address();
+      const url = `http://${host}:${address.port}`;
+      console.log(`飞哪里 FlyWhere running at ${url}`);
+      resolve({ server, url });
+    });
+  });
+}
+
+if (require.main === module) {
+  startServer().catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { startServer };

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="paper" x1="144" y1="92" x2="864" y2="936" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fffdf8"/>
+      <stop offset="1" stop-color="#e8eee9"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="28" stdDeviation="30" flood-color="#14251d" flood-opacity=".18"/>
+    </filter>
+    <filter id="mark-shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#14251d" flood-opacity=".18"/>
+    </filter>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="214" fill="url(#paper)" filter="url(#shadow)"/>
+  <rect x="76" y="76" width="872" height="872" rx="202" fill="none" stroke="#ffffff" stroke-opacity=".58" stroke-width="3"/>
+
+  <circle cx="512" cy="504" r="326" fill="#1e2421" filter="url(#mark-shadow)"/>
+  <circle cx="512" cy="504" r="276" fill="none" stroke="#8aa494" stroke-opacity=".16" stroke-width="3"/>
+
+  <!-- A route drawn as a question mark: flying first, deciding where second. -->
+  <path d="M338 386C375 306 468 268 562 280C666 293 739 368 729 461C721 535 669 572 597 604C533 632 505 677 505 724"
+        fill="none" stroke="#fffdf8" stroke-width="58" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M690 517L732 456L670 424" fill="none" stroke="#e45f36" stroke-width="31" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="505" cy="800" r="31" fill="#e45f36"/>
+  <circle cx="505" cy="800" r="12" fill="#fffdf8"/>
+</svg>

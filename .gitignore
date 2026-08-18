@@ -3,6 +3,7 @@
 !.env.example
 .flymap-config.json
 node_modules/
+out/
 output/
 .playwright-cli/
 .playwright-mcp/

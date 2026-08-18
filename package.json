@@ -1,8 +1,11 @@
 {
   "name": "flywhere",
-  "version": "0.1.0",
+  "version": "0.2.2",
   "private": true,
+  "productName": "飞哪里 FlyWhere",
+  "main": "desktop/main.js",
   "description": "固定日期，根据真实往返票价探索目的地。",
+  "author": "AyingAI",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -12,7 +15,17 @@
   "bugs": "https://github.com/AyingAI/flywhere/issues",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js"
+    "desktop": "electron .",
+    "package:mac": "electron-builder --config electron-builder.config.js --dir --mac --arm64",
+    "make:mac": "electron-builder --config electron-builder.config.js --mac dmg --arm64",
+    "make:mac:universal": "electron-builder --config electron-builder.config.js --mac dmg --universal",
+    "check": "node --check server.js && node --check desktop/main.js && node --check electron-builder.config.js",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "@fly-ai/flyai-cli": "1.0.16",
+    "electron": "43.4.0",
+    "electron-builder": "26.15.3"
   },
   "engines": {
     "node": ">=20"

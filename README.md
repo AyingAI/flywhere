@@ -9,6 +9,40 @@
 
 飞哪里是一个本地运行的机票探索工具。固定出发与回程日期后，它会查询真实航班，把不同目的地的往返组合、全员总价、飞行时间与天气放在同一张地图和列表里，帮助你回答：**这次哪里便宜，值得飞？**
 
+## macOS 应用
+
+macOS 版本已经内置 Node.js 运行环境与 FlyAI 航班查询组件。普通用户不需要安装 Node、npm、Git 或使用终端：
+
+1. 打开 `FlyWhere-版本-universal.dmg`。
+2. 把“飞哪里 FlyWhere”拖入“应用程序”。
+3. 首次打开后，前往飞猪 AI 开放平台获取 API Key，粘贴并保存。
+4. 选择日期，直接搜索低价目的地。
+
+桌面版设置保存在 `~/Library/Application Support/飞哪里 FlyWhere/`。飞猪与 AI API Key 使用 macOS Keychain 加密，查询记录仍只保存在本机。
+
+### 构建 DMG
+
+```bash
+npm install
+
+# 当前 Apple Silicon Mac 的测试包
+npm run make:mac
+
+# 同时支持 Intel 与 Apple Silicon 的单一安装包
+npm run make:mac:universal
+```
+
+产物位于 `out/`。未配置 Apple Developer 证书时会生成未签名测试包；正式对外发布时设置以下环境变量后重新构建：
+
+```bash
+export APPLE_TEAM_ID="你的 Team ID"
+export APPLE_ID="你的 Apple ID"
+export APPLE_APP_PASSWORD="App 专用密码"
+npm run make:mac:universal
+```
+
+构建脚本会使用 Developer ID 签名并提交 Apple 公证。不要把证书、密码或这些环境变量提交到仓库。
+
 ## 核心能力
 
 - **全国探索**：以价格优先发现目的地，不只重复推荐热门城市。
@@ -70,7 +104,8 @@ npm start
 
 | 数据或请求 | 用途 | 保存位置 |
 | --- | --- | --- |
-| `.flymap-config.json` | 飞猪与 AI 设置 | 项目目录，仅本机，权限 `0600`，已被 Git 忽略 |
+| `.flymap-config.json` | 网页版飞猪与 AI 设置 | 项目目录，仅本机，权限 `0600`，已被 Git 忽略 |
+| macOS Application Support + Keychain | 桌面版设置与加密后的 API Key | 当前 Mac 用户目录 |
 | 浏览器 `localStorage` | 查询记录、AI 建议、已去过标记 | 当前浏览器 |
 | 飞猪 AI 开放平台 | 查询真实航班 | 由 FlyAI CLI 请求 |
 | Open-Meteo | 天气与地理编码 | 不保存个人身份信息 |
@@ -96,7 +131,7 @@ npm start
 npm run check
 ```
 
-项目刻意保持轻量：前端位于 `index.html`，本地服务与外部能力适配位于 `server.js`，没有构建步骤和运行时 npm 依赖。
+网页版仍保持轻量：前端位于 `index.html`，本地服务与外部能力适配位于 `server.js`。桌面入口位于 `desktop/main.js`，DMG 配置位于 `electron-builder.config.js`。
 
 贡献约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。当前主要在 macOS 与 Node.js 20+ 环境验证，其他平台的问题与改进欢迎提交 Issue。
 
