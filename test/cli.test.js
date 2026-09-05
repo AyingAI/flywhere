@@ -23,7 +23,7 @@ function loadCli(platform, execute = execFile) {
 test('shell execution rejects command syntax before spawning', async () => {
   let calls = 0;
   const { execCapture } = loadCli('win32', () => { calls++; });
-  for (const value of ['safe&ver', 'safe|ver', 'a"&ver', '%PATH%', '!PATH!', 'a^b', 'a>b', '<file', 'a\nb', 'a\rb', 'a\0b', 42, {}]) {
+  for (const value of ['safe&ver', 'safe|ver', 'safe" --version', '%PATH%', '!PATH!', 'a^b', 'a>b', '<file', 'a\nb', 'a\rb', 'a\0b', 42, {}]) {
     await assert.rejects(execCapture('codex', ['-m', value], { shell: true }), /CLI 参数/);
   }
   await assert.rejects(execCapture('codex&ver', [], { shell: true }), /CLI 参数/);

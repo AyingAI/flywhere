@@ -30,6 +30,28 @@ function openExternal(value) {
   if (isExternalUrlAllowed(value)) shell.openExternal(value);
 }
 
+function augmentCliPath() {
+  if (process.platform !== 'darwin') return;
+  const home = app.getPath('home');
+  const candidates = [
+    '/opt/homebrew/bin',
+    '/opt/homebrew/sbin',
+    '/usr/local/bin',
+    '/usr/local/sbin',
+    path.join(home, '.local', 'bin'),
+    path.join(home, '.npm-global', 'bin'),
+    path.join(home, '.opencode', 'bin'),
+    path.join(home, '.bun', 'bin'),
+    '/Applications/ChatGPT.app/Contents/Resources'
+  ];
+  const currentPath = process.env.PATH || '/usr/bin:/bin';
+  const knownEntries = new Set(currentPath.split(':'));
+  const additions = candidates.filter(directory => {
+    try { return fs.statSync(directory).isDirectory(); } catch { return false; }
+  }).filter(directory => !knownEntries.has(directory));
+  if (additions.length) process.env.PATH = [...additions, currentPath].join(':');
+}
+
 function runFlyaiUtility({ args, model, apiKey }) {
   return new Promise((resolve, reject) => {
     const env = { ...process.env, FLYAI_API_KEY: apiKey };
@@ -132,6 +154,7 @@ function createWindow() {
 }
 
 async function startDesktopApp() {
+  augmentCliPath();
   const dataDirectory = path.join(app.getPath('userData'), 'data');
   fs.mkdirSync(dataDirectory, { recursive: true });
   app.setAppLogsPath();
