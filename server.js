@@ -113,12 +113,20 @@ function writeLocalConfig(next) {
 
 function execCapture(command, args, options = {}) {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { timeout: options.timeout || 10000, maxBuffer: options.maxBuffer || 4 * 1024 * 1024, env: options.env || process.env, cwd: __dirname }, (error, stdout, stderr) => {
+    const shellCommand = options.shell ? [command, ...args].map(arg => {
+      if (typeof arg !== 'string' || /[\x00-\x1f"%!^&|<>]/.test(arg)) throw new Error('CLI 参数包含不支持的命令行字符');
+      return `"${arg.replace(/(\\+)$/, '$1$1')}"`;
+    }).join(' ') : command;
+    const child = execFile(shellCommand, options.shell ? [] : args, { timeout: options.timeout || 10000, maxBuffer: options.maxBuffer || 4 * 1024 * 1024, env: options.env || process.env, cwd: __dirname, shell: options.shell }, (error, stdout, stderr) => {
       if (error) return reject(new Error(String(stderr || stdout || error.message).trim()));
       resolve(String(stdout || stderr).trim());
     });
+    if (options.input !== undefined) child.stdin?.end(options.input);
   });
 }
+
+const pathLocator = process.platform === 'win32' ? 'where' : 'which';
+const cliSpawnShell = process.platform === 'win32';
 
 async function installFlyaiCli() {
   if (desktopMode && bundledFlyaiPath) return;
@@ -163,12 +171,12 @@ function hasEnvironmentCredential(names) {
 async function cliAuthorization(id) {
   const home = os.homedir();
   if (id === 'codex') {
-    const output = await execCapture('codex', ['login', 'status']);
+    const output = await execCapture('codex', ['login', 'status'], { shell: cliSpawnShell });
     const authenticated = /logged in/i.test(output);
     return { authenticated, authDetail: authenticated ? output.replace(/^Logged in using\s*/i, '已通过 ') : '尚未登录' };
   }
   if (id === 'claude') {
-    const output = await execCapture('claude', ['auth', 'status']);
+    const output = await execCapture('claude', ['auth', 'status'], { shell: cliSpawnShell });
     const status = JSON.parse(output);
     const authenticated = Boolean(status.loggedIn);
     return { authenticated, authDetail: authenticated ? `已授权 · ${status.apiProvider || status.authMethod || '本地账户'}` : '尚未登录' };
@@ -187,7 +195,7 @@ async function cliAuthorization(id) {
     return { authenticated, authDetail: authenticated ? '已发现本地授权凭据' : '已安装，请在 Kimi Code 中执行 /login' };
   }
   if (id === 'opencode') {
-    const output = await execCapture('opencode', ['auth', 'list']);
+    const output = await execCapture('opencode', ['auth', 'list'], { shell: cliSpawnShell });
     const matched = output.match(/(\d+)\s+credentials?/i);
     const authenticated = Number(matched?.[1] || 0) > 0 || hasFileContent(path.join(home, '.local', 'share', 'opencode', 'auth.json'));
     return { authenticated, authDetail: authenticated ? '已发现本地授权凭据' : '已安装，请运行 opencode auth login' };
@@ -199,8 +207,8 @@ async function detectCli(id) {
   const definition = cliDefinitions[id];
   let executable; let version;
   try {
-    executable = await execCapture('which', [definition.command]);
-    version = (await execCapture(definition.command, ['--version'])).split('\n')[0];
+    executable = await execCapture(pathLocator, [definition.command]);
+    version = (await execCapture(definition.command, ['--version'], { shell: cliSpawnShell })).split('\n')[0];
   } catch {
     return { id, label: definition.label, installed: false, authenticated: false, version: '', path: '', authDetail: '未安装', loginCommand: definition.loginCommand };
   }
@@ -213,7 +221,7 @@ async function detectCli(id) {
 }
 
 async function publicSettings() {
-  const detectedCli = desktopMode ? [] : await Promise.all(Object.keys(cliDefinitions).map(detectCli));
+  const detectedCli = await Promise.all(Object.keys(cliDefinitions).map(detectCli));
   const cli = detectedCli.map(({ path: _localPath, ...status }) => status);
   let flyaiCliInstalled = Boolean(bundledFlyaiPath && fs.existsSync(bundledFlyaiPath));
   if (!flyaiCliInstalled) try { flyaiCliInstalled = Boolean(await execCapture('which', ['flyai'])); } catch {}
@@ -221,7 +229,7 @@ async function publicSettings() {
   const flyaiApiKey = effective('FLYAI_API_KEY');
   return {
     desktopApp: desktopMode,
-    aiMode: desktopMode ? 'api' : (localConfig.aiMode || 'api'),
+    aiMode: localConfig.aiMode || 'api',
     aiCli: localConfig.aiCli || 'codex',
     aiBaseUrl: effective('AI_BASE_URL'),
     model: effective('MODEL_NAME'),
@@ -236,8 +244,7 @@ async function publicSettings() {
 
 function saveSettings(payload) {
   const next = { ...localConfig };
-  if (desktopMode) next.aiMode = 'api';
-  else if (payload.aiMode === 'api' || payload.aiMode === 'cli') next.aiMode = payload.aiMode;
+  if (payload.aiMode === 'api' || payload.aiMode === 'cli') next.aiMode = payload.aiMode;
   if (cliDefinitions[payload.aiCli]) next.aiCli = payload.aiCli;
   if (typeof payload.aiBaseUrl === 'string') {
     const aiBaseUrl = payload.aiBaseUrl.trim();
@@ -627,42 +634,45 @@ async function runAiCli(prompt, cli, model) {
   const status = await detectCli(cli);
   if (!status.installed) throw new Error(`${status.label} 未安装`);
   if (!status.authenticated) throw new Error(`${status.label} 尚未授权，请先运行 ${status.loginCommand}`);
+  // Windows 需经 shell 启动 npm shim（.cmd）；参数由 execCapture 校验，prompt 走 stdin 避免长度上限
+  const promptViaStdin = process.platform === 'win32';
+  const spawnCli = args => execCapture(cli, args, { timeout: 90000, shell: cliSpawnShell, input: promptViaStdin ? prompt : undefined });
   if (cli === 'codex') {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flymap-ai-'));
     const outputPath = path.join(tempDir, 'answer.txt');
     const args = ['exec', '--ephemeral', '--skip-git-repo-check', '--ignore-rules', '-s', 'read-only', '--color', 'never', '-o', outputPath];
     if (model) args.push('-m', model);
-    args.push(prompt);
-    try { await execCapture('codex', args, { timeout: 90000 }); return fs.readFileSync(outputPath, 'utf8'); }
+    if (!promptViaStdin) args.push(prompt);
+    try { await spawnCli(args); return fs.readFileSync(outputPath, 'utf8'); }
     finally { fs.rmSync(tempDir, { recursive: true, force: true }); }
   }
   if (cli === 'claude') {
     const args = ['-p', '--output-format', 'text', '--disable-slash-commands'];
     if (model) args.push('--model', model);
-    args.push(prompt);
-    return execCapture('claude', args, { timeout: 90000 });
+    if (!promptViaStdin) args.push(prompt);
+    return spawnCli(args);
   }
   if (cli === 'gemini') {
-    const args = ['-p', prompt, '--output-format', 'text', '--approval-mode', 'plan'];
+    const args = promptViaStdin ? ['--output-format', 'text', '--approval-mode', 'plan'] : ['-p', prompt, '--output-format', 'text', '--approval-mode', 'plan'];
     if (model) args.push('--model', model);
-    return execCapture('gemini', args, { timeout: 90000 });
+    return spawnCli(args);
   }
   if (cli === 'pi') {
     const args = ['--print', '--no-session', '--tools', 'read,grep,find,ls'];
     if (model) args.push('--model', model);
-    args.push(prompt);
-    return execCapture('pi', args, { timeout: 90000 });
+    if (!promptViaStdin) args.push(prompt);
+    return spawnCli(args);
   }
   if (cli === 'kimi') {
-    const args = ['--plan', '--prompt', prompt, '--output-format', 'text'];
+    const args = promptViaStdin ? ['--print', '--plan', '--output-format', 'text'] : ['--plan', '--prompt', prompt, '--output-format', 'text'];
     if (model) args.unshift('--model', model);
-    return execCapture('kimi', args, { timeout: 90000 });
+    return spawnCli(args);
   }
   if (cli === 'opencode') {
     const args = ['run'];
     if (model) args.push('--model', model);
-    args.push(prompt);
-    return execCapture('opencode', args, { timeout: 90000 });
+    if (!promptViaStdin) args.push(prompt);
+    return spawnCli(args);
   }
   throw new Error(`暂不支持通过 ${status.label} 调用 AI`);
 }

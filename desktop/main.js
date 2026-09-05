@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const { app, BrowserWindow, dialog, session, shell, utilityProcess } = require('electron');
 
+const isDevelopment = !app.isPackaged;
 let localServer;
 let localUrl = '';
 
@@ -93,12 +94,22 @@ function createWindow() {
     backgroundColor: '#fffdf8',
     show: false,
     webPreferences: {
+      devTools: isDevelopment,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
       webviewTag: false
     }
   });
+
+  if (isDevelopment) {
+    window.webContents.on('before-input-event', (event, input) => {
+      if (input.type === 'keyDown' && input.key === 'F12') {
+        event.preventDefault();
+        window.webContents.openDevTools();
+      }
+    });
+  }
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     openExternal(url);
@@ -116,6 +127,7 @@ function createWindow() {
   window.loadURL(localUrl).catch(error => {
     dialog.showErrorBox('飞哪里启动失败', error.message);
   });
+
   return window;
 }
 
