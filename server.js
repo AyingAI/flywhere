@@ -20,9 +20,10 @@ const airportCoordinates = {
   XMN: [118.13, 24.54], FOC: [119.66, 25.93], HAK: [110.46, 19.94], SYX: [109.41, 18.30], HGH: [120.43, 30.23],
   NKG: [118.86, 31.74], WUH: [114.21, 30.78], CSX: [113.22, 28.19], CGO: [113.84, 34.52], TAO: [120.37, 36.27],
   DLC: [121.54, 38.97], SHE: [123.48, 41.64], HRB: [126.25, 45.62], URC: [87.47, 43.91], KHG: [76.02, 39.54],
-  LHW: [103.62, 36.51], XNN: [101.45, 36.53], LXA: [90.91, 29.30], NNG: [108.17, 22.61], KWE: [106.80, 26.54]
+  LHW: [103.62, 36.51], XNN: [101.45, 36.53], LXA: [90.91, 29.30], NNG: [108.17, 22.61], KWE: [106.80, 26.54],
+  LYG: [119.18, 34.62]
 };
-const cityCoordinates = { 喀什: airportCoordinates.KHG, 北京: airportCoordinates.BJS, 广州: airportCoordinates.CAN, 上海: airportCoordinates.SHA, 成都: airportCoordinates.CTU, 深圳: airportCoordinates.SZX };
+const cityCoordinates = { 喀什: airportCoordinates.KHG, 北京: airportCoordinates.BJS, 广州: airportCoordinates.CAN, 上海: airportCoordinates.SHA, 成都: airportCoordinates.CTU, 深圳: airportCoordinates.SZX, 连云港: airportCoordinates.LYG };
 const domesticExplorationCities = [
   '北京', '上海', '成都', '重庆', '昆明', '西安', '厦门', '福州', '泉州', '海口', '三亚', '杭州', '南京', '宁波', '温州', '武汉', '长沙', '郑州', '青岛', '济南',
   '大连', '沈阳', '长春', '哈尔滨', '贵阳', '桂林', '南宁', '北海', '珠海', '兰州', '西宁', '银川', '乌鲁木齐', '喀什', '拉萨', '大理', '丽江', '西双版纳',
@@ -31,6 +32,8 @@ const domesticExplorationCities = [
 ];
 const domesticCitySet = new Set(['广州', '深圳', ...domesticExplorationCities]);
 const explorationDestinationLimit = 10;
+const minimumExplorationDestinations = 6;
+const explorationFallbackAttempts = 12;
 const chinaMapUrl = 'https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json';
 const echartsUrl = 'https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js';
 const brandLogoUrl = 'https://gitee.com/ayingsxcw/gameimg/raw/master/img/20260811074953392.webp';
@@ -556,6 +559,14 @@ function domesticPriceSort(a, b) {
   return Number(!isDomesticDestination(a)) - Number(!isDomesticDestination(b)) || Number(a.totalPrice ?? a.fare) - Number(b.totalPrice ?? b.fare);
 }
 
+function roundTripCombinations(outboundOptions, inboundOptions, query) {
+  const combinations = [];
+  for (const out of outboundOptions) for (const back of inboundOptions) {
+    if (out.layoverMinutes + back.layoverMinutes <= 4 * 60) combinations.push(makeResult(out, back, query));
+  }
+  return combinations;
+}
+
 function searchCacheKey(query) {
   return JSON.stringify({ origin: query.origin || '广州', destination: query.destination || 'all', trip: query.trip || 'round', depDate: query.depDate, backDate: query.backDate || '', outTimeStart: query.outTimeStart || '', outTimeEnd: query.outTimeEnd || '', backTimeStart: query.backTimeStart || '', backTimeEnd: query.backTimeEnd || '', model: query.model || effective('MODEL_NAME') });
 }
@@ -572,10 +583,11 @@ async function searchFresh(query) {
   const successful = outboundSearches.filter(item => item.status === 'fulfilled').map(item => item.value);
   if (!successful.length) throw outboundSearches[0]?.reason || new Error('航班查询没有返回结果');
   const outboundNormalized = successful.flatMap(normalize);
+  const attemptedDomesticCities = new Set(outboundNormalized.filter(isDomesticDestination).map(item => normalizedDomesticCityName(item.city)));
   if (!destination) {
-    const existingDomesticCities = new Set(outboundNormalized.filter(isDomesticDestination).map(item => normalizedDomesticCityName(item.city)));
-    const needed = Math.max(0, explorationDestinationLimit - existingDomesticCities.size);
-    const targets = stableExplorationTargets(query, existingDomesticCities).slice(0, needed);
+    const needed = Math.max(0, explorationDestinationLimit - attemptedDomesticCities.size);
+    const targets = stableExplorationTargets(query, attemptedDomesticCities).slice(0, needed);
+    targets.forEach(city => attemptedDomesticCities.add(city));
     const supplements = await Promise.allSettled(targets.map(city => runFlyai([...common, '--sort-type', '3', '--destination', city, ...dateArgs(query, 'dep')], model)));
     outboundNormalized.push(...supplements.filter(item => item.status === 'fulfilled').flatMap(item => normalize(item.value)));
   }
@@ -591,19 +603,43 @@ async function searchFresh(query) {
   }
   const results = [];
   for (const outboundOptions of destinations) {
-      const outboundItem = outboundOptions[0];
-      const inboundArgs = ['--origin', outboundItem.code, '--destination', origin, '--sort-type', '3', ...dateArgs(query, 'back')];
-      if (query.backTimeStart) inboundArgs.push('--dep-hour-start', String(Number(query.backTimeStart.slice(0, 2))));
-      if (query.backTimeEnd) inboundArgs.push('--dep-hour-end', String(Number(query.backTimeEnd.slice(0, 2))));
-      let inboundData;
-      try { inboundData = await runFlyai(inboundArgs); }
-      catch { continue; }
-      const inboundOptions = uniqueFlights(normalize(inboundData).filter(f => inTime(f.time, query.backTimeStart, query.backTimeEnd) && reasonableItinerary(f)));
-      const combinations = [];
-      for (const out of outboundOptions) for (const back of inboundOptions) {
-        if (out.layoverMinutes + back.layoverMinutes <= 4 * 60) combinations.push(makeResult(out, back, query));
+    const outboundItem = outboundOptions[0];
+    const inboundArgs = ['--origin', outboundItem.code, '--destination', origin, '--sort-type', '3', ...dateArgs(query, 'back')];
+    if (query.backTimeStart) inboundArgs.push('--dep-hour-start', String(Number(query.backTimeStart.slice(0, 2))));
+    if (query.backTimeEnd) inboundArgs.push('--dep-hour-end', String(Number(query.backTimeEnd.slice(0, 2))));
+    let inboundData;
+    try { inboundData = await runFlyai(inboundArgs); }
+    catch { continue; }
+    const inboundOptions = uniqueFlights(normalize(inboundData).filter(f => inTime(f.time, query.backTimeStart, query.backTimeEnd) && reasonableItinerary(f)));
+    results.push(...roundTripCombinations(outboundOptions, inboundOptions, query));
+  }
+  if (!destination) {
+    const matchedDestinations = new Set(results.map(item => item.code));
+    const fallbackTargets = stableExplorationTargets(query, attemptedDomesticCities);
+    let fallbackAttempts = 0;
+    for (const city of fallbackTargets) {
+      if (matchedDestinations.size >= minimumExplorationDestinations || fallbackAttempts >= explorationFallbackAttempts) break;
+      fallbackAttempts++;
+      try {
+        const outboundData = await runFlyai([...common, '--sort-type', '3', '--destination', city, ...dateArgs(query, 'dep')], model);
+        const outboundOptions = uniqueFlights(normalize(outboundData).filter(f => inTime(f.time, query.outTimeStart, query.outTimeEnd) && reasonableItinerary(f)));
+        if (!outboundOptions.length) continue;
+        const fallbackAirport = outboundOptions[0];
+        const fallbackOutboundOptions = outboundOptions.filter(item => item.code === fallbackAirport.code);
+        const inboundArgs = ['--origin', fallbackAirport.code, '--destination', origin, '--sort-type', '3', ...dateArgs(query, 'back')];
+        if (query.backTimeStart) inboundArgs.push('--dep-hour-start', String(Number(query.backTimeStart.slice(0, 2))));
+        if (query.backTimeEnd) inboundArgs.push('--dep-hour-end', String(Number(query.backTimeEnd.slice(0, 2))));
+        const inboundData = await runFlyai(inboundArgs);
+        const inboundOptions = uniqueFlights(normalize(inboundData).filter(f => inTime(f.time, query.backTimeStart, query.backTimeEnd) && reasonableItinerary(f)));
+        const combinations = roundTripCombinations(fallbackOutboundOptions, inboundOptions, query);
+        if (combinations.length) {
+          results.push(...combinations);
+          matchedDestinations.add(fallbackAirport.code);
+        }
+      } catch {
+        continue;
       }
-      results.push(...combinations);
+    }
   }
   return results.filter(Boolean).sort(domesticPriceSort).map((item, index) => ({ ...item, rank: index + 1 }));
 }

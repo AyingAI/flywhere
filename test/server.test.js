@@ -82,3 +82,71 @@ test('nationwide exploration supplements domestic destinations and ranks them fi
     await new Promise(resolve => server.close(resolve));
   }
 });
+
+test('nationwide round trips add fallback destinations when few trips match', { timeout: 20000 }, async () => {
+  const calls = [];
+  const codesByCity = new Map([['上海', 'SHA'], ['北京', 'BJS']]);
+  let outboundDestinationCalls = 0;
+  const flightItem = (fromCity, fromCode, toCity, toCode, price, date) => ({
+    adultPrice: `¥${price}`,
+    journeys: [{
+      journeyType: '直达',
+      totalDuration: '120分钟',
+      segments: [{
+        depCityCode: fromCode, depCityName: fromCity, depStationCode: fromCode, depDateTime: `${date} 09:00:00`,
+        arrCityCode: toCode, arrCityName: toCity, arrStationCode: toCode, arrDateTime: `${date} 11:00:00`,
+        duration: '120分钟', marketingTransportName: '测试航司'
+      }]
+    }]
+  });
+  const flightResponse = items => ({ data: { itemList: items } });
+  const { server, url } = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    flyaiRunner: async request => {
+      calls.push(request);
+      const args = request.args;
+      const destinationIndex = args.indexOf('--destination');
+      const origin = args[args.indexOf('--origin') + 1];
+      const destination = destinationIndex >= 0 ? args[destinationIndex + 1] : '';
+      const date = args[args.indexOf('--dep-date') + 1];
+      if (destinationIndex < 0) {
+        return flightResponse([
+          flightItem('广州', 'CAN', '上海', 'SHA', 500, date),
+          flightItem('广州', 'CAN', '北京', 'BJS', 550, date)
+        ]);
+      }
+      if (origin === '广州' && destination !== '广州') {
+        outboundDestinationCalls++;
+        if (outboundDestinationCalls <= 8) throw new Error('暂时没有航班');
+        const code = `D${String(outboundDestinationCalls).padStart(2, '0')}`;
+        codesByCity.set(destination, code);
+        return flightResponse([flightItem('广州', 'CAN', destination, code, 600 + outboundDestinationCalls, date)]);
+      }
+      const code = args[args.indexOf('--origin') + 1];
+      const city = [...codesByCity.entries()].find(([, value]) => value === code)?.[0] || '测试目的地';
+      return flightResponse([flightItem(city, code, '广州', 'CAN', 600, date)]);
+    }
+  });
+
+  try {
+    const response = await fetch(`${url}/api/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: url },
+      body: JSON.stringify({
+        origin: '广州',
+        destination: 'all',
+        trip: 'round',
+        depDate: '2026-10-08',
+        backDate: '2026-10-12'
+      })
+    });
+    const result = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(new Set(result.results.map(item => item.code)).size, 6);
+    assert.ok(result.results.every(item => item.back));
+    assert.equal(outboundDestinationCalls, 12);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
