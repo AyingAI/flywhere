@@ -1,6 +1,6 @@
 {
   "name": "flywhere",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "productName": "飞哪里 FlyWhere",
   "main": "desktop/main.js",
@@ -19,6 +19,7 @@
     "package:mac": "electron-builder --config electron-builder.config.js --dir --mac --arm64",
     "make:mac": "electron-builder --config electron-builder.config.js --mac dmg --arm64",
     "make:mac:universal": "electron-builder --config electron-builder.config.js --mac dmg --universal",
+    "make:win": "electron-builder --config electron-builder.config.js --win nsis --x64",
     "check": "node --check server.js && node --check desktop/main.js && node --check electron-builder.config.js",
     "test": "node --test"
   },

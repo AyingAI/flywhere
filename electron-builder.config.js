@@ -48,5 +48,16 @@ module.exports = {
       { x: 480, y: 190, type: 'link', path: '/Applications' }
     ]
   },
+  win: {
+    icon: 'assets/app-icon.png',
+    target: 'nsis'
+  },
+  nsis: {
+    oneClick: false,
+    allowToChangeInstallationDirectory: true,
+    createDesktopShortcut: 'always',
+    createStartMenuShortcut: true,
+    shortcutName: 'FlyWhere'
+  },
   artifactName: 'FlyWhere-${version}-${arch}.${ext}'
 };

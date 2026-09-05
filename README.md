@@ -9,18 +9,30 @@
 
 飞哪里是一个本地运行的机票探索工具。固定出发与回程日期后，它会查询真实航班，把不同目的地的往返组合、全员总价、飞行时间与天气放在同一张地图和列表里，帮助你回答：**这次哪里便宜，值得飞？**
 
-## macOS 应用
+## 桌面应用
 
-macOS 版本已经内置 Node.js 运行环境与 FlyAI 航班查询组件。普通用户不需要安装 Node、npm、Git 或使用终端：
+桌面版已经内置 Node.js 运行环境与 FlyAI 航班查询组件。普通用户不需要安装 Node、npm、Git 或使用终端。
+
+### macOS
 
 1. 打开 `FlyWhere-版本-universal.dmg`。
 2. 把“飞哪里 FlyWhere”拖入“应用程序”。
-3. 首次打开后，前往飞猪 AI 开放平台获取 API Key，粘贴并保存。
-4. 选择日期，直接搜索低价目的地。
 
-桌面版设置保存在 `~/Library/Application Support/飞哪里 FlyWhere/`。飞猪与 AI API Key 使用 macOS Keychain 加密，查询记录仍只保存在本机。
+### Windows
 
-### 构建 DMG
+1. 打开 `FlyWhere-版本-x64.exe`。
+2. 按安装向导选择目录并完成安装。
+
+### 首次使用
+
+1. 前往飞猪 AI 开放平台获取 API Key，粘贴并保存。
+2. 选择日期，直接搜索低价目的地。
+
+桌面版设置保存在当前用户的系统数据目录：macOS 是 `~/Library/Application Support/飞哪里 FlyWhere/`，Windows 是 `%APPDATA%/飞哪里 FlyWhere/`。飞猪与 AI API Key 使用 Electron `safeStorage` 加密后落盘，查询记录仍只保存在本机。
+
+### 构建安装包
+
+macOS：
 
 ```bash
 npm install
@@ -30,6 +42,13 @@ npm run make:mac
 
 # 同时支持 Intel 与 Apple Silicon 的单一安装包
 npm run make:mac:universal
+```
+
+Windows：
+
+```bash
+npm install
+npm run make:win
 ```
 
 产物位于 `out/`。未配置 Apple Developer 证书时会生成未签名测试包；正式对外发布时设置以下环境变量后重新构建：
