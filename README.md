@@ -4,31 +4,52 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-365346.svg)](LICENSE)
 [![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-365346.svg)](https://nodejs.org/)
+[![Latest Release](https://img.shields.io/github/v/release/AyingAI/flywhere?label=Release&color=37715A)](https://github.com/AyingAI/flywhere/releases/latest)
 
 ![飞哪里 FlyWhere：通过航线雷达、价格票签和登机牌探索低价目的地](assets/flywhere-cover.jpg)
 
-飞哪里是一个本地运行的机票探索工具。固定出发与回程日期后，它会查询真实航班，把不同目的地的往返组合、全员总价、飞行时间与天气放在同一张地图和列表里，帮助你回答：**这次哪里便宜，值得飞？**
+飞哪里是一个本地运行的机票探索工具，提供 macOS 与 Windows 桌面应用，也可以用 Node.js 启动网页版。固定出发与回程日期后，它会查询真实航班，把不同目的地的往返组合、全员总价、飞行时间与天气放在同一张地图和列表里，帮助你回答：**这次哪里便宜，值得飞？**
+
+## 下载 v0.2.3
+
+最新桌面安装包见 [v0.2.3 Release](https://github.com/AyingAI/flywhere/releases/tag/v0.2.3)：
+
+| 平台 | 安装包 | 适用系统 |
+| --- | --- | --- |
+| macOS | [FlyWhere-0.2.3-universal.dmg](https://github.com/AyingAI/flywhere/releases/download/v0.2.3/FlyWhere-0.2.3-universal.dmg) | macOS 12+，Intel 与 Apple Silicon |
+| Windows | [FlyWhere-0.2.3-x64.exe](https://github.com/AyingAI/flywhere/releases/download/v0.2.3/FlyWhere-0.2.3-x64.exe) | Windows 10/11 x64；ARM64 暂未提供安装包 |
+
+桌面安装包含 Node.js 运行环境和 FlyAI 航班查询组件，不需要另装 Node、npm、Git 或命令行工具。当前安装包未做代码签名和公证；请只从本仓库 Release 页下载，并在 Release 页核对 SHA-256。
 
 ## 桌面应用
 
-桌面版已经内置 Node.js 运行环境与 FlyAI 航班查询组件。普通用户不需要安装 Node、npm、Git 或使用终端。
+桌面版内置 Node.js 运行环境与 FlyAI 航班查询组件。API Key 只保存在本机，不需要登录飞猪账号，也不会经过本项目服务器中转。
 
 ### macOS
 
-1. 打开 `FlyWhere-版本-universal.dmg`。
+1. 打开 [FlyWhere-0.2.3-universal.dmg](https://github.com/AyingAI/flywhere/releases/download/v0.2.3/FlyWhere-0.2.3-universal.dmg)。
 2. 把“飞哪里 FlyWhere”拖入“应用程序”。
+3. 因安装包未公证，首次打开时系统可能要求确认；按 macOS 提示前往“隐私与安全性”允许打开。
 
 ### Windows
 
-1. 打开 `FlyWhere-版本-x64.exe`。
+1. 打开 [FlyWhere-0.2.3-x64.exe](https://github.com/AyingAI/flywhere/releases/download/v0.2.3/FlyWhere-0.2.3-x64.exe)。
 2. 按安装向导选择目录并完成安装。
+3. 因安装包未签名，首次启动或安装时 Windows 可能显示发布者未知提示。
+
+### v0.2.3 更新重点
+
+- 全国探索在往返结果少于 6 个目的地时继续尝试候选城市；仍保留你设置的时间、直飞、时长和价格筛选条件。
+- 修复连云港等城市缺少内置机场坐标时不出现在地图的问题，并让天气、地图和历史记录共用城市坐标兜底。
+- 偏好筛选、时间与偏好、设置、目的地选项和查询记录弹窗都支持点击弹窗外部关闭。
+- 新增 Windows x64 NSIS 安装包；macOS universal DMG 同时覆盖 Intel 和 Apple Silicon。
 
 ### 首次使用
 
 1. 前往飞猪 AI 开放平台获取 API Key，粘贴并保存。
 2. 选择日期，直接搜索低价目的地。
 
-桌面版设置保存在当前用户的系统数据目录：macOS 是 `~/Library/Application Support/飞哪里 FlyWhere/`，Windows 是 `%APPDATA%/飞哪里 FlyWhere/`。飞猪与 AI API Key 使用 Electron `safeStorage` 加密后落盘，查询记录仍只保存在本机。
+桌面版设置保存在当前用户系统数据目录的 `data/settings.json`：macOS 是 `~/Library/Application Support/飞哪里 FlyWhere/`，Windows 是 `%APPDATA%\飞哪里 FlyWhere\`。飞猪与 AI API Key 使用 Electron `safeStorage` 加密后落盘，查询记录仍只保存在本机。
 
 ### 构建安装包
 
@@ -124,8 +145,8 @@ npm start
 | 数据或请求 | 用途 | 保存位置 |
 | --- | --- | --- |
 | `.flymap-config.json` | 网页版飞猪与 AI 设置 | 项目目录，仅本机，权限 `0600`，已被 Git 忽略 |
-| macOS Application Support + Keychain | 桌面版设置与加密后的 API Key | 当前 Mac 用户目录 |
-| 浏览器 `localStorage` | 查询记录、AI 建议、已去过标记 | 当前浏览器 |
+| 桌面数据目录 + Electron `safeStorage` | 桌面版设置与加密后的 API Key | macOS Application Support；Windows `%APPDATA%` |
+| 应用本地存储 | 查询记录、AI 建议、已去过标记 | 桌面版保存在系统数据目录；网页版保存在当前浏览器 |
 | 飞猪 AI 开放平台 | 查询真实航班 | 由 FlyAI CLI 请求 |
 | Open-Meteo | 天气与地理编码 | 不保存个人身份信息 |
 | 阿里云 DataV | 中国地图边界 | 服务端缓存 |
@@ -150,9 +171,9 @@ npm start
 npm run check
 ```
 
-网页版仍保持轻量：前端位于 `index.html`，本地服务与外部能力适配位于 `server.js`。桌面入口位于 `desktop/main.js`，DMG 配置位于 `electron-builder.config.js`。
+网页版仍保持轻量：前端位于 `index.html`，本地服务与外部能力适配位于 `server.js`。桌面入口位于 `desktop/main.js`，macOS DMG 与 Windows NSIS 打包配置位于 `electron-builder.config.js`。
 
-贡献约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。当前主要在 macOS 与 Node.js 20+ 环境验证，其他平台的问题与改进欢迎提交 Issue。
+贡献约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。当前主流程和打包脚本主要在 macOS 上验证；Windows x64 安装包已发布，Windows 安装或兼容性问题请提交 Issue 并附上系统版本、复现步骤和现象。
 
 ## 项目限制
 
