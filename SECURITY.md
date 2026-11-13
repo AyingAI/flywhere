@@ -8,13 +8,15 @@
 
 网页中的飞猪与 AI Key 由本机 Node 服务写入 `.flymap-config.json`，文件权限为 `0600`，并已加入 `.gitignore`。设置查询接口只返回是否配置和固定掩码，不返回原始 Key。
 
-macOS 桌面版把设置写入当前用户的 Application Support 目录，API Key 使用 Electron `safeStorage` 与 macOS Keychain 加密后再落盘，文件权限同样为 `0600`。应用不会把 Key 明文返回给渲染页面。
+桌面版将设置保存在当前用户的数据目录。API Key 通过 Electron `safeStorage` 加密后写入，macOS 使用 Keychain，Windows 使用系统加密。已保存的 AI Key 仅用于原接口地址。更换地址后，请填写新地址对应的 Key。
 
 不要提交以下文件：
 
 - `.env`
 - `.flymap-config.json`
 - 任何包含 API Key、Cookie 或访问令牌的日志与截图
+
+桌面安装包使用固定的文件列表构建。发布前检查源码、Git 历史和打包内容，确认本机配置、测试文件及密钥没有进入安装包。
 
 ## 网络边界
 

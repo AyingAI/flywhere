@@ -52,7 +52,7 @@ function augmentCliPath() {
   if (additions.length) process.env.PATH = [...additions, currentPath].join(':');
 }
 
-function runFlyaiUtility({ args, model, apiKey }) {
+function runFlyaiUtility({ args, model, apiKey, timeout: timeoutMs = 90000 }) {
   return new Promise((resolve, reject) => {
     const env = { ...process.env, FLYAI_API_KEY: apiKey };
     delete env.ELECTRON_RUN_AS_NODE;
@@ -93,7 +93,7 @@ function runFlyaiUtility({ args, model, apiKey }) {
     const timeout = setTimeout(() => {
       child.kill();
       finish(new Error('FlyAI 查询超时，请稍后重试'));
-    }, 90000);
+    }, timeoutMs);
 
     child.stdout?.on('data', chunk => { stdout = append(stdout, chunk); });
     child.stderr?.on('data', chunk => { stderr = append(stderr, chunk); });

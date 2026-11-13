@@ -3,6 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { execFile } = require('child_process');
+const { createHash } = require('node:crypto');
+const internationalDestinations = require('./assets/international-destinations');
 
 loadEnv();
 const defaultPort = Number(process.env.PORT || 4173);
@@ -24,6 +26,8 @@ const airportCoordinates = {
   LYG: [119.18, 34.62]
 };
 const cityCoordinates = { 喀什: airportCoordinates.KHG, 北京: airportCoordinates.BJS, 广州: airportCoordinates.CAN, 上海: airportCoordinates.SHA, 成都: airportCoordinates.CTU, 深圳: airportCoordinates.SZX, 连云港: airportCoordinates.LYG };
+// FlyAI can resolve these codes as cities, so use unambiguous airport names.
+const airportSearchNames = { SHA: '上海虹桥', CTU: '成都双流国际机场' };
 const domesticExplorationCities = [
   '北京', '上海', '成都', '重庆', '昆明', '西安', '厦门', '福州', '泉州', '海口', '三亚', '杭州', '南京', '宁波', '温州', '武汉', '长沙', '郑州', '青岛', '济南',
   '大连', '沈阳', '长春', '哈尔滨', '贵阳', '桂林', '南宁', '北海', '珠海', '兰州', '西宁', '银川', '乌鲁木齐', '喀什', '拉萨', '大理', '丽江', '西双版纳',
@@ -31,11 +35,13 @@ const domesticExplorationCities = [
   '香港', '澳门', '台北', '高雄'
 ];
 const domesticCitySet = new Set(['广州', '深圳', ...domesticExplorationCities]);
+const regionalAirportCodes = new Set(['HKG', 'MFM', 'TPE', 'TSA', 'KHH', 'RMQ', 'TNN', 'TTT', 'HUN', 'MZG', 'KNH', 'CYI']);
 const explorationDestinationLimit = 10;
 const minimumExplorationDestinations = 6;
 const explorationFallbackAttempts = 12;
 const chinaMapUrl = 'https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json';
-const echartsUrl = 'https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js';
+const echartsUrl = 'https://cdn.jsdelivr.net/npm/echarts@6.1.0/dist/echarts.min.js';
+const echartsSha256 = 'b66b25aeb4df84e33199dc21694014d336d222cbd9deb0e5a7c14bd6aa0d0fd0';
 const brandLogoUrl = 'https://gitee.com/ayingsxcw/gameimg/raw/master/img/20260811074953392.webp';
 let chinaMapCache = { expiresAt: 0, data: null };
 let echartsSourceCache = '';
@@ -245,18 +251,34 @@ async function publicSettings() {
   };
 }
 
+function normalizedAiBaseUrl(value) {
+  let url;
+  try { url = new URL(String(value || '').trim()); }
+  catch { throw new Error('请输入有效的 OpenAI 兼容接口地址'); }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+    throw new Error('接口地址需使用 HTTP 或 HTTPS，且只包含域名、端口和路径');
+  }
+  const base = url.href.replace(/\/+$/, '');
+  return base.endsWith('/v1') ? base : `${base}/v1`;
+}
+
+function sameAiEndpoint(first, second) {
+  if (!first || !second) return false;
+  try { return normalizedAiBaseUrl(first) === normalizedAiBaseUrl(second); }
+  catch { return false; }
+}
+
 function saveSettings(payload) {
   const next = { ...localConfig };
   if (payload.aiMode === 'api' || payload.aiMode === 'cli') next.aiMode = payload.aiMode;
   if (cliDefinitions[payload.aiCli]) next.aiCli = payload.aiCli;
   if (typeof payload.aiBaseUrl === 'string') {
     const aiBaseUrl = payload.aiBaseUrl.trim();
-    if (aiBaseUrl) {
-      let parsed;
-      try { parsed = new URL(aiBaseUrl); } catch { throw new Error('请输入有效的 OpenAI 兼容接口地址'); }
-      if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('接口地址仅支持 http 或 https');
-      next.aiBaseUrl = aiBaseUrl.replace(/\/+$/, '');
-    } else next.aiBaseUrl = '';
+    if (aiBaseUrl) normalizedAiBaseUrl(aiBaseUrl);
+    if (aiBaseUrl !== effective('AI_BASE_URL') && !sameAiEndpoint(aiBaseUrl, effective('AI_BASE_URL'))) {
+      next.aiApiKey = '';
+    }
+    next.aiBaseUrl = aiBaseUrl.replace(/\/+$/, '');
   }
   if (typeof payload.model === 'string') next.model = payload.model.trim();
   if (typeof payload.aiApiKey === 'string' && payload.aiApiKey.trim()) next.aiApiKey = payload.aiApiKey.trim();
@@ -268,7 +290,7 @@ function saveSettings(payload) {
 
 async function getChinaMap() {
   if (chinaMapCache.data && chinaMapCache.expiresAt > Date.now()) return chinaMapCache.data;
-  const response = await fetch(chinaMapUrl);
+  const response = await fetch(chinaMapUrl, { signal: AbortSignal.timeout(10000) });
   if (!response.ok) throw new Error(`地图数据读取失败（HTTP ${response.status}）`);
   const data = await response.json();
   chinaMapCache = { expiresAt: Date.now() + 24 * 60 * 60 * 1000, data };
@@ -277,9 +299,13 @@ async function getChinaMap() {
 
 async function getEchartsSource() {
   if (echartsSourceCache) return echartsSourceCache;
-  const response = await fetch(echartsUrl);
+  const response = await fetch(echartsUrl, { signal: AbortSignal.timeout(10000) });
   if (!response.ok) throw new Error(`地图组件读取失败（HTTP ${response.status}）`);
-  echartsSourceCache = await response.text();
+  const source = await response.text();
+  if (createHash('sha256').update(source).digest('hex') !== echartsSha256) {
+    throw new Error('地图组件完整性校验失败');
+  }
+  echartsSourceCache = source;
   return echartsSourceCache;
 }
 
@@ -363,27 +389,27 @@ async function weatherForecast(payload) {
   return data;
 }
 
-function runFlyaiOnce(args, model) {
+function runFlyaiOnce(args, model, timeout = 90000) {
   const apiKey = effective('FLYAI_API_KEY');
-  if (flyaiRunner) return flyaiRunner({ args, model, apiKey });
+  if (flyaiRunner) return flyaiRunner({ args, model, apiKey, timeout });
   return new Promise((resolve, reject) => {
     const env = { ...process.env, FLYAI_API_KEY: apiKey };
     if (model) env.MODEL_NAME = model;
     const command = bundledFlyaiPath ? process.execPath : 'flyai';
     const commandArgs = bundledFlyaiPath ? [bundledFlyaiPath, 'search-flight', ...args] : ['search-flight', ...args];
     if (bundledFlyaiPath && process.versions.electron) env.ELECTRON_RUN_AS_NODE = '1';
-    execFile(command, commandArgs, { env, timeout: 90000, maxBuffer: 12 * 1024 * 1024 }, (error, stdout, stderr) => {
+    execFile(command, commandArgs, { env, timeout, maxBuffer: 12 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (error) return reject(new Error(stderr.trim() || error.message));
       try { resolve(JSON.parse(stdout)); } catch { reject(new Error('FlyAI 返回了无法解析的数据')); }
     });
   });
 }
 
-function flyaiCacheKey(args, model) { return JSON.stringify({ args, model: model || '' }); }
+function flyaiCacheKey(args, model, strict) { return JSON.stringify({ args, model: model || '', strict }); }
 function isRateLimited(error) { return /\b429\b|rate limit|too many requests/i.test(String(error?.message || error)); }
 
-function runFlyai(args, model) {
-  const key = flyaiCacheKey(args, model);
+function runFlyai(args, model, { deadline, strict = false } = {}) {
+  const key = flyaiCacheKey(args, model, strict);
   const cached = flyaiCache.get(key);
   if (cached?.expiresAt > Date.now()) return Promise.resolve(cached.data);
   if (flyaiInflight.has(key)) return flyaiInflight.get(key);
@@ -394,13 +420,23 @@ function runFlyai(args, model) {
     let lastError;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const data = await runFlyaiOnce(args, model);
+        const remaining = deadline ? deadline - Date.now() : 90000;
+        if (remaining <= 0) throw new Error('FlyAI 查询超时');
+        const timeout = strict ? Math.min(remaining, 12000) : remaining;
+        const data = await runFlyaiOnce(args, model, timeout);
+        if (strict && data?.status != null && Number(data.status) !== 0) {
+          throw new Error(String(data.message || '航班查询未完成'));
+        }
         flyaiNextRunAt = Date.now() + 450;
-        flyaiCache.set(key, { data, expiresAt: Date.now() + 10 * 60 * 1000 });
-        if (flyaiCache.size > 120) flyaiCache.delete(flyaiCache.keys().next().value);
+        const hasFlightItems = !strict || data?.data?.itemList?.length > 0;
+        if (hasFlightItems) {
+          flyaiCache.set(key, { data, expiresAt: Date.now() + 10 * 60 * 1000 });
+          if (flyaiCache.size > 120) flyaiCache.delete(flyaiCache.keys().next().value);
+        }
         return data;
       } catch (error) {
         lastError = error;
+        flyaiNextRunAt = Date.now() + 450;
         if (!isRateLimited(error) || attempt === 2) throw error;
         const delay = 1000 * (attempt + 1);
         flyaiNextRunAt = Date.now() + delay;
@@ -417,12 +453,9 @@ function runFlyai(args, model) {
 
 let modelsCache = { expiresAt: 0, models: [] };
 function openAiCompatibleUrl(pathname, overrideBaseUrl) {
-  const baseUrl = String(overrideBaseUrl === undefined ? effective('AI_BASE_URL') : overrideBaseUrl).trim().replace(/\/+$/, '');
+  const baseUrl = String(overrideBaseUrl === undefined ? effective('AI_BASE_URL') : overrideBaseUrl).trim();
   if (!baseUrl) throw new Error('未配置 OpenAI 兼容接口地址');
-  let parsed;
-  try { parsed = new URL(baseUrl); } catch { throw new Error('请输入有效的 OpenAI 兼容接口地址'); }
-  if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('接口地址仅支持 http 或 https');
-  return `${baseUrl.endsWith('/v1') ? baseUrl : `${baseUrl}/v1`}/${pathname.replace(/^\//, '')}`;
+  return `${normalizedAiBaseUrl(baseUrl)}/${pathname}`;
 }
 
 async function listModels(options = {}) {
@@ -430,7 +463,9 @@ async function listModels(options = {}) {
   if (useConfigured && modelsCache.expiresAt > Date.now()) return modelsCache.models;
   const apiKey = String(useConfigured ? effective('AI_API_KEY') : options.apiKey || '').trim();
   if (!apiKey) throw new Error('未配置 AI API Key');
-  const response = await fetch(openAiCompatibleUrl('models', useConfigured ? undefined : options.baseUrl), { headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(15000) });
+  const response = await fetch(openAiCompatibleUrl('models', useConfigured ? undefined : options.baseUrl), {
+    headers: { Authorization: `Bearer ${apiKey}` }, redirect: 'error', signal: AbortSignal.timeout(15000)
+  });
   if (!response.ok) throw new Error(`模型列表请求失败（HTTP ${response.status}）`);
   const payload = await response.json();
   const models = (Array.isArray(payload?.data) ? payload.data : [])
@@ -489,19 +524,62 @@ function estimatedJourneyFee(segments) {
   return { amount: fees.reduce((total, fee) => total + fee.amount, 0), distanceKm: fees.reduce((total, fee) => total + fee.distanceKm, 0), segments: fees };
 }
 
+function segmentAirport(segment, side) {
+  const code = String(segment?.[`${side}StationCode`] || '').trim().toUpperCase();
+  if (!code) return null;
+  const name = segment[`${side}StationShortName`] || segment[`${side}StationName`] || code;
+  return { code, name };
+}
+
+function normalizeJourney(journey, fallbackDuration) {
+  const segments = journey?.segments;
+  if (!Array.isArray(segments) || !segments.length || segments.some(segment => !segment)) return null;
+  const first = segments[0], last = segments.at(-1);
+  if (!last.arrCityName || !last.arrCityCode || typeof first.depDateTime !== 'string') return null;
+  const flightMinutes = segments.reduce((total, segment) => total + durationMinutes(segment.duration), 0);
+  const elapsedMinutes = durationMinutes(journey.totalDuration || fallbackDuration) || flightMinutes;
+  const airlines = [...new Set(segments.map(segment => segment.marketingTransportName).filter(Boolean))].join(' / ');
+  const flightKey = JSON.stringify(segments.map(segment => [
+    segment.depStationCode || segment.depCityCode, segment.depDateTime,
+    segment.arrStationCode || segment.arrCityCode, segment.arrDateTime,
+    segment.marketingTransportNo || segment.marketingTransportName
+  ]));
+  const international = segments.some(segment =>
+    segment.depCityAbroad === true || segment.arrCityAbroad === true ||
+    [segment.depCityCode, segment.arrCityCode, segment.depStationCode, segment.arrStationCode].some(code => regionalAirportCodes.has(code))
+  );
+  return {
+    flightKey, city: last.arrCityName, code: last.arrCityCode, departureCityCode: first.depCityCode,
+    departureAirport: segmentAirport(first, 'dep'), arrivalAirport: segmentAirport(last, 'arr'),
+    date: first.depDateTime.slice(0, 10), time: first.depDateTime.slice(11, 16),
+    arrivalDate: last.arrDateTime?.slice(0, 10), arrivalTime: last.arrDateTime?.slice(11, 16),
+    airline: airlines, flightMinutes, elapsedMinutes, international, segments,
+    layoverMinutes: durationMinutes(journey.transferDuration) || Math.max(0, elapsedMinutes - flightMinutes),
+    duration: Number((flightMinutes / 60).toFixed(1)), direct: journey.journeyType === '直达'
+  };
+}
+
 function normalize(data) {
-  return (data?.data?.itemList || []).map(item => {
-    const journey = item?.journeys?.[0];
-    const segments = journey?.segments || [];
-    const first = segments[0], last = segments.at(-1);
-    const flightMinutes = segments.reduce((total, segment) => total + durationMinutes(segment?.duration), 0);
-    const elapsedMinutes = durationMinutes(journey?.totalDuration || item?.totalDuration) || flightMinutes;
-    const airlines = [...new Set(segments.map(segment => segment?.marketingTransportName).filter(Boolean))].join(' / ');
-    return { item, city: last?.arrCityName, code: last?.arrCityCode, date: first?.depDateTime?.slice(0, 10), time: first?.depDateTime?.slice(11, 16), arrivalTime: last?.arrDateTime?.slice(11, 16), airline: airlines, flightMinutes, elapsedMinutes, layoverMinutes: Math.max(0, elapsedMinutes - flightMinutes), duration: Number((flightMinutes / 60).toFixed(1)), direct: journey?.journeyType === '直达', fare: value(item, ['ticketPrice', 'adultPrice', 'price']), fee: value(item, ['taxFee', 'tax']), estimatedFee: estimatedJourneyFee(segments), jumpUrl: item.jumpUrl };
-  }).filter(item => item.city && item.code && item.date && item.time && item.fare !== null);
+  const items = data?.data?.itemList || [];
+  return items.flatMap(item => {
+    if (item?.journeys?.length !== 1) return [];
+    const flight = normalizeJourney(item.journeys[0], item.totalDuration);
+    const fare = value(item, ['ticketPrice', 'adultPrice', 'price']);
+    if (!flight || !flight.time || fare === null) return [];
+    return [{
+      ...flight, fare, fee: value(item, ['taxFee', 'tax']),
+      estimatedFee: flight.international ? null : estimatedJourneyFee(flight.segments), jumpUrl: item.jumpUrl
+    }];
+  });
 }
 function inTime(time, start, end) { return !start || !end || time >= start && time <= end; }
 function reasonableItinerary(flight) { return flight.direct || flight.layoverMinutes <= 4 * 60; }
+function matchesDomesticPreferences(flight, query) {
+  if (query.maxFlightHours && (!flight.flightMinutes || flight.flightMinutes > query.maxFlightHours * 60)) return false;
+  return !query.avoidRedeye || !flight.segments.some(segment =>
+    [segment.depDateTime, segment.arrDateTime].some(time => /^0[0-5]:/.test(String(time || '').slice(11, 16)))
+  );
+}
 function dateArgs(query, prefix) {
   const fixedDate = query[`${prefix}Date`];
   if (fixedDate) return ['--dep-date', fixedDate];
@@ -525,17 +603,19 @@ function validateTripDates(query) {
 }
 function airportFee(item) {
   if (item.fee !== null) return { amount: item.fee, source: '接口', distanceKm: null };
+  if (item.international) return { amount: 0, source: '', distanceKm: null, pending: true };
   if (item.estimatedFee) return { amount: item.estimatedFee.amount, source: '航程估算', distanceKm: item.estimatedFee.distanceKm, segments: item.estimatedFee.segments };
   return { amount: feePolicy.airportConstruction + feePolicy.longHaulFuelSurcharge, source: '兜底估算', distanceKm: null };
 }
 function uniqueFlights(flights) {
-  const seen = new Set();
-  return flights.filter(flight => {
-    const key = `${flight.airline}|${flight.time}|${flight.direct ? 'direct' : 'transfer'}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  const byFlight = new Map();
+  for (const flight of flights) {
+    const previous = byFlight.get(flight.flightKey);
+    if (!previous || flight.fare + airportFee(flight).amount < previous.fare + airportFee(previous).amount) {
+      byFlight.set(flight.flightKey, flight);
+    }
+  }
+  return [...byFlight.values()];
 }
 
 function normalizedDomesticCityName(value) {
@@ -568,30 +648,48 @@ function roundTripCombinations(outboundOptions, inboundOptions, query) {
 }
 
 function searchCacheKey(query) {
-  return JSON.stringify({ origin: query.origin || '广州', destination: query.destination || 'all', trip: query.trip || 'round', depDate: query.depDate, backDate: query.backDate || '', outTimeStart: query.outTimeStart || '', outTimeEnd: query.outTimeEnd || '', backTimeStart: query.backTimeStart || '', backTimeEnd: query.backTimeEnd || '', model: query.model || effective('MODEL_NAME') });
+  return JSON.stringify({ scope: query.scope, origin: query.origin || '广州', originAirport: query.originAirport, passengers: query.passengers || 1, destination: query.destination || 'all', trip: query.trip || 'round', depDate: query.depDate, backDate: query.backDate || '', outTimeStart: query.outTimeStart || '', outTimeEnd: query.outTimeEnd || '', backTimeStart: query.backTimeStart || '', backTimeEnd: query.backTimeEnd || '', avoidRedeye: query.avoidRedeye, maxFlightHours: query.maxFlightHours, model: query.model || effective('MODEL_NAME') });
 }
 
 async function searchFresh(query) {
-  const origin = query.origin || '广州';
+  const airport = query.originAirport;
+  const origin = airport ? (airportSearchNames[airport] || airport) : (query.origin || '广州');
   const destination = query.destination && query.destination !== 'all' ? query.destination : null;
   const common = ['--origin', origin];
   if (query.outTimeStart) common.push('--dep-hour-start', String(Number(query.outTimeStart.slice(0, 2))));
   if (query.outTimeEnd) common.push('--dep-hour-end', String(Number(query.outTimeEnd.slice(0, 2))));
   const model = query.model || effective('MODEL_NAME');
+  const inScope = flight => query.scope !== 'domestic' || !flight.international;
+  const normalizeOutbound = data => normalize(data).filter(flight => inScope(flight) && (!airport || flight.departureAirport?.code === airport));
+  const matches = (flight, start, end) => inTime(flight.time, start, end) &&
+    reasonableItinerary(flight) && matchesDomesticPreferences(flight, query);
+  const outboundMatches = flight => matches(flight, query.outTimeStart, query.outTimeEnd);
+  async function returnFlights(from) {
+    const args = ['--origin', from, '--destination', origin, '--sort-type', '3', ...dateArgs(query, 'back')];
+    if (query.backTimeStart) args.push('--dep-hour-start', String(Number(query.backTimeStart.slice(0, 2))));
+    if (query.backTimeEnd) args.push('--dep-hour-end', String(Number(query.backTimeEnd.slice(0, 2))));
+    const data = await runFlyai(args, model);
+    return uniqueFlights(normalize(data).filter(flight =>
+      inScope(flight) && (!airport || flight.arrivalAirport?.code === airport) &&
+      matches(flight, query.backTimeStart, query.backTimeEnd)
+    ));
+  }
   const sortTypes = ['3', '4', '2', '8'];
   const outboundSearches = await Promise.allSettled(sortTypes.map(sortType => runFlyai([...common, '--sort-type', sortType, ...(destination ? ['--destination', destination] : []), ...dateArgs(query, 'dep')], model)));
   const successful = outboundSearches.filter(item => item.status === 'fulfilled').map(item => item.value);
   if (!successful.length) throw outboundSearches[0]?.reason || new Error('航班查询没有返回结果');
-  const outboundNormalized = successful.flatMap(normalize);
+  const outboundNormalized = successful.flatMap(normalizeOutbound);
   const attemptedDomesticCities = new Set(outboundNormalized.filter(isDomesticDestination).map(item => normalizedDomesticCityName(item.city)));
   if (!destination) {
-    const needed = Math.max(0, explorationDestinationLimit - attemptedDomesticCities.size);
+    const eligibleCities = new Set(outboundNormalized.filter(flight => isDomesticDestination(flight) && outboundMatches(flight))
+      .map(flight => normalizedDomesticCityName(flight.city)));
+    const needed = Math.max(0, explorationDestinationLimit - eligibleCities.size);
     const targets = stableExplorationTargets(query, attemptedDomesticCities).slice(0, needed);
     targets.forEach(city => attemptedDomesticCities.add(city));
     const supplements = await Promise.allSettled(targets.map(city => runFlyai([...common, '--sort-type', '3', '--destination', city, ...dateArgs(query, 'dep')], model)));
-    outboundNormalized.push(...supplements.filter(item => item.status === 'fulfilled').flatMap(item => normalize(item.value)));
+    outboundNormalized.push(...supplements.filter(item => item.status === 'fulfilled').flatMap(item => normalizeOutbound(item.value)));
   }
-  const outbound = outboundNormalized.filter(f => inTime(f.time, query.outTimeStart, query.outTimeEnd) && reasonableItinerary(f));
+  const outbound = outboundNormalized.filter(outboundMatches);
   const groups = new Map();
   outbound.forEach(f => {
     if (!groups.has(f.code)) groups.set(f.code, []);
@@ -603,15 +701,12 @@ async function searchFresh(query) {
   }
   const results = [];
   for (const outboundOptions of destinations) {
-    const outboundItem = outboundOptions[0];
-    const inboundArgs = ['--origin', outboundItem.code, '--destination', origin, '--sort-type', '3', ...dateArgs(query, 'back')];
-    if (query.backTimeStart) inboundArgs.push('--dep-hour-start', String(Number(query.backTimeStart.slice(0, 2))));
-    if (query.backTimeEnd) inboundArgs.push('--dep-hour-end', String(Number(query.backTimeEnd.slice(0, 2))));
-    let inboundData;
-    try { inboundData = await runFlyai(inboundArgs); }
-    catch { continue; }
-    const inboundOptions = uniqueFlights(normalize(inboundData).filter(f => inTime(f.time, query.backTimeStart, query.backTimeEnd) && reasonableItinerary(f)));
-    results.push(...roundTripCombinations(outboundOptions, inboundOptions, query));
+    try {
+      const inboundOptions = await returnFlights(outboundOptions[0].code);
+      results.push(...roundTripCombinations(outboundOptions, inboundOptions, query));
+    } catch {
+      continue;
+    }
   }
   if (!destination) {
     const matchedDestinations = new Set(results.map(item => item.code));
@@ -622,15 +717,11 @@ async function searchFresh(query) {
       fallbackAttempts++;
       try {
         const outboundData = await runFlyai([...common, '--sort-type', '3', '--destination', city, ...dateArgs(query, 'dep')], model);
-        const outboundOptions = uniqueFlights(normalize(outboundData).filter(f => inTime(f.time, query.outTimeStart, query.outTimeEnd) && reasonableItinerary(f)));
+        const outboundOptions = uniqueFlights(normalizeOutbound(outboundData).filter(outboundMatches));
         if (!outboundOptions.length) continue;
         const fallbackAirport = outboundOptions[0];
         const fallbackOutboundOptions = outboundOptions.filter(item => item.code === fallbackAirport.code);
-        const inboundArgs = ['--origin', fallbackAirport.code, '--destination', origin, '--sort-type', '3', ...dateArgs(query, 'back')];
-        if (query.backTimeStart) inboundArgs.push('--dep-hour-start', String(Number(query.backTimeStart.slice(0, 2))));
-        if (query.backTimeEnd) inboundArgs.push('--dep-hour-end', String(Number(query.backTimeEnd.slice(0, 2))));
-        const inboundData = await runFlyai(inboundArgs);
-        const inboundOptions = uniqueFlights(normalize(inboundData).filter(f => inTime(f.time, query.backTimeStart, query.backTimeEnd) && reasonableItinerary(f)));
+        const inboundOptions = await returnFlights(fallbackAirport.code);
         const combinations = roundTripCombinations(fallbackOutboundOptions, inboundOptions, query);
         if (combinations.length) {
           results.push(...combinations);
@@ -644,20 +735,264 @@ async function searchFresh(query) {
   return results.filter(Boolean).sort(domesticPriceSort).map((item, index) => ({ ...item, rank: index + 1 }));
 }
 
-async function search(query) {
+function yuanAmount(item, fields) {
+  for (const field of fields) {
+    const raw = String(item?.[field] ?? '').trim().replace(/^(?:CNY|RMB|[¥￥])\s*/i, '').replace(/[,，]/g, '');
+    if (/^\d+(?:\.\d+)?$/.test(raw) && Number.isFinite(Number(raw))) return Number(raw);
+  }
+  return null;
+}
+
+function specifiedAirport(value, cityCode) {
+  const code = String(value || '').trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(code) && code !== cityCode ? code : '';
+}
+
+function internationalQuote(item) {
+  const currency = String(item?.currencyCode || item?.currency || 'CNY').trim().toUpperCase();
+  if (!['CNY', 'RMB', '¥', '￥'].includes(currency)) return null;
+  const fare = yuanAmount(item, ['ticketPrice', 'adultPrice', 'price']);
+  if (fare === null) return null;
+  return { fare, fee: yuanAmount(item, ['taxFee', 'tax']), jumpUrl: item.jumpUrl };
+}
+
+function matchingInternationalLegs(out, back, query) {
+  if (!out?.time || out.date !== query.depDate || !inTime(out.time, query.outTimeStart, query.outTimeEnd)) return false;
+  if (query.trip !== 'oneway' && (!back?.time || back.date !== query.backDate ||
+    !inTime(back.time, query.backTimeStart, query.backTimeEnd))) return false;
+  const fromAirport = query.originAirport || specifiedAirport(query.origin, out.departureCityCode);
+  if (fromAirport && (out.departureAirport?.code !== fromAirport ||
+    (back && back.arrivalAirport?.code !== fromAirport))) return false;
+  const toAirport = query.destination === 'all' ? '' : specifiedAirport(query.destination, out.code);
+  if (toAirport && (out.arrivalAirport?.code !== toAirport ||
+    (back && back.departureAirport?.code !== toAirport))) return false;
+  if (back && (out.code !== back.departureCityCode || out.departureCityCode !== back.code)) return false;
+  return !back || !(out.arrivalDate > back.date ||
+    (out.arrivalDate === back.date && out.arrivalTime >= back.time));
+}
+
+function internationalItinerary(item, query) {
+  const round = query.trip !== 'oneway';
+  if (item?.journeys?.length !== (round ? 2 : 1)) return null;
+  const quote = internationalQuote(item);
+  if (!quote) return null;
+  const out = normalizeJourney(item.journeys[0], round ? null : item.totalDuration);
+  const back = round ? normalizeJourney(item.journeys[1]) : null;
+  return matchingInternationalLegs(out, back, query) ? makeResult(out, back, query, quote) : null;
+}
+
+async function internationalItems(args, model, deadline) {
+  const response = await runFlyai(args, model, { deadline, strict: true });
+  const items = response?.data?.itemList;
+  if (!Array.isArray(items)) throw new Error('航班数据源未返回有效结果');
+  return items;
+}
+
+function internationalFlightArgs(origin, destination, date, start, end, sort = '3') {
+  const args = ['--origin', origin, '--destination', destination, '--dep-date', date, '--sort-type', sort];
+  if (start && start !== '00:00') args.push('--dep-hour-start', String(Number(start.slice(0, 2))));
+  if (end && end !== '23:59') args.push('--dep-hour-end', String(Number(end.slice(0, 2))));
+  return args;
+}
+
+async function searchSeparateInternationalTickets(query, origin, model, deadline) {
+  const loadLegs = async args => {
+    const items = await internationalItems(args, model, deadline);
+    return items.flatMap(item => {
+      if (item?.journeys?.length !== 1) return [];
+      const quote = internationalQuote(item);
+      const flight = normalizeJourney(item.journeys[0], item.totalDuration);
+      return quote && flight ? [{ flight, quote }] : [];
+    });
+  };
+  const outbound = await loadLegs(internationalFlightArgs(
+    origin, query.destination, query.depDate, query.outTimeStart, query.outTimeEnd
+  ));
+  if (!outbound.length) return [];
+  const inbound = await loadLegs(internationalFlightArgs(
+    query.destination, origin, query.backDate, query.backTimeStart, query.backTimeEnd
+  ));
+  const results = [];
+  for (const out of outbound) {
+    for (const back of inbound) {
+      if (!matchingInternationalLegs(out.flight, back.flight, query)) continue;
+      results.push(makeResult(out.flight, back.flight, query, {
+        fare: out.quote.fare + back.quote.fare,
+        fee: (out.quote.fee ?? 0) + (back.quote.fee ?? 0),
+        feesPending: out.quote.fee === null || back.quote.fee === null,
+        jumpUrl: out.quote.jumpUrl, backJumpUrl: back.quote.jumpUrl, separateTickets: true
+      }));
+    }
+  }
+  return results;
+}
+
+function compareQuotedPrice(a, b) {
+  return Number(Boolean(a.feesPending)) - Number(Boolean(b.feesPending)) || a.totalPrice - b.totalPrice;
+}
+
+async function searchInternational(query, reportProgress) {
+  const airport = query.originAirport;
+  const origin = airport ? (airportSearchNames[airport] || airport) : (query.origin || '广州');
+  const exploring = !query.destination || query.destination === 'all';
+  const round = query.trip !== 'oneway';
+  const targets = exploring
+    ? internationalDestinations.filter(city => !city.directedOnly &&
+      ![city.code, city.cityCode, city.name, ...(city.airports || [])].includes(origin.toUpperCase())).map(city => city.code)
+    : [query.destination];
+  const deadline = Date.now() + (exploring ? 35000 : 22000);
+  const firstPassDeadline = exploring && round ? deadline - 12000 : deadline;
+  const model = query.model || effective('MODEL_NAME');
+  const statuses = new Map(targets.map(code => [code, 'unqueried']));
+  function summarizeCoverage() {
+    const counts = { quoted: 0, empty: 0, failed: 0, unqueried: 0 };
+    for (const status of statuses.values()) counts[status]++;
+    return {
+      attempted: targets.length - counts.unqueried, completed: counts.quoted + counts.empty,
+      failed: counts.failed, planned: targets.length
+    };
+  }
+  const flightArgs = (target, sort) => internationalFlightArgs(
+    origin, target, query.depDate, query.outTimeStart, query.outTimeEnd, sort
+  );
+
+  const byItinerary = new Map();
+  const foundCities = new Set();
+  function publish(phase, details) {
+    if (exploring) reportProgress({ ...summarizeCoverage(), matched: foundCities.size, phase, ...details });
+  }
+  function addResult(result) {
+    foundCities.add(result.code);
+    const previous = byItinerary.get(result.id);
+    if (!previous || compareQuotedPrice(result, previous) < 0) byItinerary.set(result.id, result);
+  }
+  let failure, accessRestricted = false;
+  function recordFailure(error) {
+    if (/risk control|风控/i.test(error.message)) {
+      accessRestricted = true;
+      failure = error;
+    } else {
+      failure ||= error;
+    }
+  }
+  publish('search');
+  for (const target of targets) {
+    if (Date.now() >= firstPassDeadline) break;
+    let completed = false, matched = false;
+    for (const sort of exploring ? ['3'] : ['3', '8']) {
+      if (Date.now() >= firstPassDeadline) break;
+      try {
+        const args = flightArgs(target, sort);
+        if (round) args.push('--back-date', query.backDate);
+        const items = await internationalItems(args, model, firstPassDeadline);
+        completed = true;
+        for (const item of items) {
+          const result = internationalItinerary(item, query);
+          if (!result) continue;
+          if (exploring && result.code !== target && result.outArrivalAirport?.code !== target) continue;
+          addResult(result);
+          matched = true;
+        }
+      } catch (error) {
+        recordFailure(error);
+        if (accessRestricted) break;
+      }
+    }
+    statuses.set(target, matched ? 'quoted' : completed ? 'empty' : 'failed');
+    publish('search');
+    if (accessRestricted) break;
+  }
+  // Use the remaining time to recover sparse or heavily interrupted searches.
+  const firstPass = summarizeCoverage();
+  if (exploring && !accessRestricted && (foundCities.size < 4 || firstPass.failed > firstPass.completed) && Date.now() < deadline) {
+    const recoveryRoutes = ['failed', 'empty', ...(round ? ['unqueried'] : [])]
+      .flatMap(status => targets.filter(target => statuses.get(target) === status))
+      .slice(0, round ? targets.length : 4);
+    let rechecked = 0;
+    const publishRecovery = () => publish('recovery', { rechecked, toRecheck: recoveryRoutes.length });
+    if (recoveryRoutes.length) publishRecovery();
+    for (const target of recoveryRoutes) {
+      if (Date.now() >= deadline) break;
+      const routeQuery = { ...query, destination: target };
+      try {
+        const recovered = round
+          ? await searchSeparateInternationalTickets(routeQuery, origin, model, deadline)
+          : (await internationalItems(flightArgs(target, '8'), model, deadline))
+            .map(item => internationalItinerary(item, routeQuery)).filter(Boolean);
+        recovered.forEach(addResult);
+        statuses.set(target, recovered.length ? 'quoted' : 'empty');
+      } catch (error) {
+        recordFailure(error);
+        if (statuses.get(target) === 'unqueried') statuses.set(target, 'failed');
+      }
+      rechecked++;
+      publishRecovery();
+      if (accessRestricted) break;
+    }
+  }
+  if (!exploring && round && !accessRestricted && !byItinerary.size && Date.now() < deadline) {
+    try {
+      const separate = await searchSeparateInternationalTickets(query, origin, model, deadline);
+      separate.forEach(addResult);
+      statuses.set(query.destination, separate.length ? 'quoted' : 'empty');
+    } catch (error) {
+      recordFailure(error);
+    }
+  }
+  const coverage = summarizeCoverage();
+  if (exploring) coverage.destinations = targets.map(code => ({ code, status: statuses.get(code) }));
+  if (!coverage.completed && failure) {
+    if (exploring) failure.coverage = coverage;
+    throw failure;
+  }
+  const results = [...byItinerary.values()].sort(compareQuotedPrice).map((item, index) => ({ ...item, rank: index + 1 }));
+  return { results, coverage };
+}
+
+async function search(query, onProgress) {
   validateTripDates(query);
+  const originAirport = String(query.originAirport || '').trim().toUpperCase();
+  if (originAirport && !/^[A-Z]{3}$/.test(originAirport)) {
+    const error = new Error('请选择有效的出发机场');
+    error.statusCode = 400;
+    throw error;
+  }
+  const maxFlightHours = Number(query.maxFlightHours);
+  query = {
+    ...query, originAirport,
+    maxFlightHours: query.scope !== 'international' && Number.isFinite(maxFlightHours) && maxFlightHours > 0 ? maxFlightHours : 0,
+    avoidRedeye: query.scope !== 'international' && query.avoidRedeye === true
+  };
   const key = searchCacheKey(query);
   const cached = searchCache.get(key);
-  if (cached?.expiresAt > Date.now()) return cached.results;
-  if (searchInflight.has(key)) return searchInflight.get(key);
-  const task = searchFresh(query).then(results => {
-    searchCache.set(key, { results, expiresAt: Date.now() + 30 * 60 * 1000 });
-    if (searchCache.size > 16) searchCache.delete(searchCache.keys().next().value);
-    return results;
-  });
-  searchInflight.set(key, task);
-  task.finally(() => searchInflight.delete(key)).catch(() => undefined);
-  return task;
+  if (cached?.expiresAt > Date.now()) return cached.response;
+  let job = searchInflight.get(key);
+  if (!job) {
+    job = { listeners: new Set(), progress: null };
+    const publish = progress => {
+      job.progress = progress;
+      for (const listener of job.listeners) listener(progress);
+    };
+    const load = query.scope === 'international' ? searchInternational(query, publish) : searchFresh(query).then(results => ({ results }));
+    job.task = load.then(response => {
+      if (!response.coverage || (response.results.length && response.coverage.completed === response.coverage.planned)) {
+        searchCache.set(key, { response, expiresAt: Date.now() + 30 * 60 * 1000 });
+        if (searchCache.size > 16) searchCache.delete(searchCache.keys().next().value);
+      }
+      return response;
+    });
+    searchInflight.set(key, job);
+    job.task.finally(() => searchInflight.delete(key)).catch(() => undefined);
+  }
+  if (onProgress) {
+    job.listeners.add(onProgress);
+    if (job.progress) onProgress(job.progress);
+  }
+  try {
+    return await job.task;
+  } finally {
+    if (onProgress) job.listeners.delete(onProgress);
+  }
 }
 function parseAiJson(content) {
   const clean = String(content || '').replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
@@ -732,7 +1067,10 @@ async function aiAdvice(payload) {
   const model = payload.model || effective('MODEL_NAME');
   const candidates = Array.isArray(payload.results) ? payload.results : [];
   if (!candidates.length) throw new Error('没有可供 AI 分析的航班组合');
-  const prompt = `你是机票决策助手。请分析以下真实航班候选，为用户给出可并列比较的建议。不要筛选、不要修改排序、不要创造或推测数据。请从候选中分别选择：优先考虑（平衡总价、总行程、直飞）、最省钱（总价最低）、少折腾（优先直飞和较短总行程；没有直飞时说明取舍）。仅返回 JSON：{"summary":"一句不超过50字的整体建议","advice":[{"label":"优先考虑","id":"候选id","reason":"不超过40字，具体说明价格、时长、直飞等取舍"},{"label":"最省钱","id":"候选id","reason":"不超过40字"},{"label":"少折腾","id":"候选id","reason":"不超过40字"}]}。每个 id 必须来自候选中的 id；候选不足三个时允许复用。不要把“已配对”当作理由。候选：${JSON.stringify(candidates)}。`;
+  const fareGuidance = candidates.some(item => item.feesPending)
+    ? ' feesPending 为 true 时，价格是税费待确认的报价。最低价建议写作“报价较低”，理由中注明税费待确认。'
+    : '';
+  const prompt = `你是机票决策助手。请分析以下真实航班候选，为用户给出可并列比较的建议。不要筛选、不要修改排序、不要创造或推测数据。请从候选中分别选择：优先考虑（平衡总价、总行程、直飞）、最省钱（总价最低）、少折腾（优先直飞和较短总行程；没有直飞时说明取舍）。仅返回 JSON：{"summary":"一句不超过50字的整体建议","advice":[{"label":"优先考虑","id":"候选id","reason":"不超过40字，具体说明价格、时长、直飞等取舍"},{"label":"最省钱","id":"候选id","reason":"不超过40字"},{"label":"少折腾","id":"候选id","reason":"不超过40字"}]}。每个 id 必须来自候选中的 id；候选不足三个时允许复用。不要把“已配对”当作理由。${fareGuidance}候选：${JSON.stringify(candidates)}。`;
   if (mode === 'cli') {
     const cli = localConfig.aiCli || 'codex';
     const result = normalizeAiAdvice(parseAiJson(await runAiCli(prompt, cli, model)), candidates);
@@ -742,28 +1080,67 @@ async function aiAdvice(payload) {
   const apiKey = effective('AI_API_KEY');
   if (!apiKey) throw new Error('未配置 OpenAI 兼容接口地址或 API Key');
   if (!model) throw new Error('请选择一个 AI 模型');
-  const response = await fetch(openAiCompatibleUrl('chat/completions'), { method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${apiKey}`}, body:JSON.stringify({model, temperature:0.2, messages:[{role:'user', content:prompt}]}) });
+  const response = await fetch(openAiCompatibleUrl('chat/completions'), {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, temperature: 0.2, messages: [{ role: 'user', content: prompt }] }),
+    redirect: 'error', signal: AbortSignal.timeout(90000)
+  });
   if (!response.ok) throw new Error(`AI 建议请求失败（HTTP ${response.status}）`);
   const data = await response.json(); const content = data?.choices?.[0]?.message?.content || '';
   const result = normalizeAiAdvice(parseAiJson(content), candidates);
   if (!result.advice.length) throw new Error('AI 未返回可用建议');
   return { ...result, model, channel: 'api' };
 }
-function makeResult(outbound, inbound, query) {
+function segmentDetails(flight) {
+  return flight?.segments.map(segment => ({
+    from: segmentAirport(segment, 'dep'), to: segmentAirport(segment, 'arr'),
+    departure: segment.depDateTime, arrival: segment.arrDateTime,
+    airline: segment.marketingTransportName, number: segment.marketingTransportNo
+  }));
+}
+
+function makeResult(outbound, inbound, query, quote) {
   const people = Math.max(1, Number(query.passengers || 1));
-  const outboundFee = airportFee(outbound); const inboundFee = inbound ? airportFee(inbound) : { amount: 0, source: '预估' };
+  const outboundFee = quote ? { amount: quote.fee ?? 0, source: '接口', pending: quote.feesPending ?? quote.fee === null } : airportFee(outbound);
+  const inboundFee = inbound && !quote ? airportFee(inbound) : { amount: 0 };
   const feeItems = [outboundFee, inboundFee].filter(item => item.amount > 0);
-  const feeSources = [...new Set(feeItems.map(item => item.source))];
+  const feeSources = quote?.fee === 0 ? ['接口'] : [...new Set(feeItems.map(item => item.source))];
   const feeDistanceKm = feeItems.every(item => Number.isFinite(item.distanceKm)) ? feeItems.reduce((total, item) => total + item.distanceKm, 0) : null;
-  const perPerson = outbound.fare + (inbound?.fare || 0) + outboundFee.amount + inboundFee.amount;
-  const id = [outbound.code, outbound.airline, outbound.date, outbound.time, inbound?.airline || '', inbound?.date || '', inbound?.time || ''].join('::');
+  const fare = quote?.fare ?? (outbound.fare + (inbound?.fare || 0));
+  const fees = outboundFee.amount + inboundFee.amount;
+  const feesPending = Boolean(outboundFee.pending || inboundFee.pending);
+  const perPerson = fare + fees;
+  const flightKeys = [outbound.flightKey, inbound?.flightKey];
+  if (quote?.separateTickets) flightKeys.push('separate');
+  const id = createHash('sha256').update(JSON.stringify(flightKeys)).digest('base64url');
   const flightMinutes = outbound.flightMinutes + (inbound?.flightMinutes || 0);
   const journeyMinutes = outbound.elapsedMinutes + (inbound?.elapsedMinutes || 0);
   const transferWaitMinutes = outbound.layoverMinutes + (inbound?.layoverMinutes || 0);
-  return { id, city: outbound.city, code: outbound.code, domestic: isDomesticDestination(outbound), date: outbound.date, backDate: inbound?.date, outboundAirline: outbound.airline, inboundAirline: inbound?.airline || '', airline: inbound ? `${outbound.airline} / ${inbound.airline}` : outbound.airline, out: outbound.time, outArr: outbound.arrivalTime || '—', back: inbound?.time || '—', backArr: inbound?.arrivalTime || '—', outboundDirect: outbound.direct, inboundDirect: inbound?.direct ?? true, duration: Number((flightMinutes / 60).toFixed(1)), journeyDuration: Number((journeyMinutes / 60).toFixed(1)), transferWait: Number((transferWaitMinutes / 60).toFixed(1)), direct: outbound.direct && (!inbound || inbound.direct), fare: outbound.fare + (inbound?.fare || 0), fees: outboundFee.amount + inboundFee.amount, feeSource: feeSources.join(' + '), feeDistanceKm, perPerson: Math.round(perPerson), totalPrice: Math.round(perPerson * people), jumpUrl: outbound.jumpUrl };
+  return {
+    id, city: outbound.city, code: outbound.code, domestic: isDomesticDestination(outbound),
+    feesPending, ...(quote ? {
+      providerQuote: true, separateTickets: Boolean(quote.separateTickets), backJumpUrl: quote.backJumpUrl,
+      outSegments: segmentDetails(outbound), backSegments: segmentDetails(inbound)
+    } : {}),
+    date: outbound.date, outArrivalDate: outbound.arrivalDate, backDate: inbound?.date, backArrivalDate: inbound?.arrivalDate,
+    outDepartureAirport: outbound.departureAirport, outArrivalAirport: outbound.arrivalAirport,
+    backDepartureAirport: inbound?.departureAirport, backArrivalAirport: inbound?.arrivalAirport,
+    outboundAirline: outbound.airline, inboundAirline: inbound?.airline || '',
+    airline: inbound ? `${outbound.airline} / ${inbound.airline}` : outbound.airline,
+    out: outbound.time, outArr: outbound.arrivalTime || '—', back: inbound?.time || '—', backArr: inbound?.arrivalTime || '—',
+    outboundDirect: outbound.direct, inboundDirect: inbound?.direct ?? true,
+    duration: Number((flightMinutes / 60).toFixed(1)), journeyDuration: Number((journeyMinutes / 60).toFixed(1)),
+    transferWait: Number((transferWaitMinutes / 60).toFixed(1)), direct: outbound.direct && (!inbound || inbound.direct),
+    fare, fees,
+    feeSource: feeSources.join(' + '), feeDistanceKm,
+    perPerson: quote ? Math.round(perPerson * 100) / 100 : Math.round(perPerson),
+    totalPrice: quote ? Math.round(perPerson * people * 100) / 100 : Math.round(perPerson * people),
+    jumpUrl: quote?.jumpUrl || outbound.jumpUrl
+  };
 }
 
 function requestAllowed(request) {
+  if (request.headers['sec-fetch-site'] === 'cross-site') return false;
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) return true;
   const contentType = String(request.headers['content-type'] || '').toLowerCase();
   if (!contentType.startsWith('application/json')) return false;
@@ -776,16 +1153,60 @@ function requestAllowed(request) {
   } catch { return false; }
 }
 
-function createServer() { return http.createServer(async (request, response) => {
+function createServer(listenHost) { return http.createServer(async (request, response) => {
+  if (['127.0.0.1', 'localhost', '::1'].includes(listenHost)) {
+    const port = request.socket.localPort;
+    if (![listenHost, 'localhost', '127.0.0.1', '[::1]'].some(host => request.headers.host === `${host}:${port}`)) {
+      return send(response, 403, { error: '请通过本机服务地址访问' });
+    }
+  }
   if (!requestAllowed(request)) return send(response, 403, { error: '仅接受来自当前页面的 JSON 请求' });
   if (request.url === '/api/fee-policy') return send(response, 200, feePolicy);
   if (request.url === '/api/china-map' && request.method === 'GET') {
     try { return send(response, 200, await getChinaMap()); }
     catch (error) { return send(response, 502, { error: error.message }); }
   }
-  if (request.url === '/vendor/echarts.min.js' && request.method === 'GET') {
-    try { response.writeHead(200, { ...securityHeaders, 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=86400' }); return response.end(await getEchartsSource()); }
-    catch (error) { response.writeHead(502, { ...securityHeaders, 'Content-Type': 'application/javascript; charset=utf-8' }); return response.end(`console.error(${JSON.stringify(error.message)})`); }
+  if (request.url === '/api/world-map' && request.method === 'GET') {
+    try {
+      const map = await fs.promises.readFile(path.join(__dirname, 'assets', 'world-land.geojson'));
+      response.writeHead(200, { ...securityHeaders, 'Content-Type': 'application/geo+json', 'Cache-Control': 'public, max-age=86400' });
+      return response.end(map);
+    } catch {
+      return send(response, 500, { error: '世界地图底图读取失败' });
+    }
+  }
+  if (request.url === '/assets/international-destinations.js' && request.method === 'GET') {
+    try {
+      const catalog = await fs.promises.readFile(path.join(__dirname, 'assets', 'international-destinations.js'));
+      response.writeHead(200, { ...securityHeaders, 'Content-Type': 'application/javascript; charset=utf-8' });
+      return response.end(catalog);
+    } catch {
+      return send(response, 500, { error: '目的地目录读取失败' });
+    }
+  }
+  if (request.url === '/api/airport-coordinates' && request.method === 'GET') {
+    try {
+      const coordinates = await fs.promises.readFile(path.join(__dirname, 'assets', 'airport-coordinates.json'));
+      response.writeHead(200, { ...securityHeaders, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=86400' });
+      return response.end(coordinates);
+    } catch {
+      return send(response, 500, { error: '机场坐标读取失败' });
+    }
+  }
+  if (request.url?.split('?')[0] === '/vendor/echarts.min.js' && request.method === 'GET') {
+    try {
+      const source = await getEchartsSource();
+      response.writeHead(200, { ...securityHeaders, 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=86400' });
+      return response.end(source);
+    } catch (error) {
+      return send(response, 502, { error: error.message });
+    }
+  }
+  if (request.url === '/assets/departure-map.webp' && request.method === 'GET') {
+    const illustration = path.join(__dirname, 'assets', 'departure-map.webp');
+    if (!fs.existsSync(illustration)) return send(response, 404, { error: 'Not found' });
+    response.writeHead(200, { ...securityHeaders, 'Content-Type': 'image/webp', 'Cache-Control': 'public, max-age=86400' });
+    return fs.createReadStream(illustration).pipe(response);
   }
   if (request.url === '/assets/brand-logo' && request.method === 'GET') {
     try {
@@ -807,7 +1228,7 @@ function createServer() { return http.createServer(async (request, response) => 
   if (request.url === '/api/flyai/install' && request.method === 'POST') {
     try {
       await installFlyaiCli();
-      return send(response, 200, { installed: true, message: '飞猪查询组件已安装，可以保存 API Key 并开始搜索。' });
+      return send(response, 200, { installed: true, message: '飞猪查询组件已安装，可以开始搜索航班。' });
     } catch (error) { return send(response, 502, { installed: false, error: error.message }); }
   }
   if (request.url === '/api/models' && request.method === 'GET') {
@@ -818,10 +1239,16 @@ function createServer() { return http.createServer(async (request, response) => 
     let body = ''; request.on('data', chunk => body += chunk); request.on('end', async () => {
       try {
         const payload = JSON.parse(body);
-        const apiKey = String(payload.apiKey || (payload.useSavedKey ? effective('AI_API_KEY') : '')).trim();
+        let apiKey = String(payload.apiKey || '').trim();
+        if (!apiKey && payload.useSavedKey) {
+          if (!sameAiEndpoint(payload.baseUrl, effective('AI_BASE_URL'))) {
+            return send(response, 400, { error: '接口地址已变更，请填写该地址的 API Key', models: [] });
+          }
+          apiKey = effective('AI_API_KEY');
+        }
         const models = await listModels({ baseUrl: payload.baseUrl, apiKey });
         return send(response, 200, { models, configured: effective('MODEL_NAME') });
-      } catch (error) { return send(response, 502, { error: error.message, models: [] }); }
+      } catch (error) { return send(response, 502, { error: redactError(error), models: [] }); }
     }); return;
   }
   if (request.url === '/api/weather' && request.method === 'POST') {
@@ -838,10 +1265,36 @@ function createServer() { return http.createServer(async (request, response) => 
     }); return;
   }
   if (request.url === '/api/ai-advice' && request.method === 'POST') {
-    let body = ''; request.on('data', chunk => body += chunk); request.on('end', async () => { try { send(response, 200, await aiAdvice(JSON.parse(body))); } catch (error) { send(response, 502, { error: error.message }); } }); return;
+    let body = ''; request.on('data', chunk => body += chunk); request.on('end', async () => { try { send(response, 200, await aiAdvice(JSON.parse(body))); } catch (error) { send(response, 502, { error: redactError(error) }); } }); return;
   }
   if (request.url === '/api/search' && request.method === 'POST') {
-    let body = ''; request.on('data', chunk => body += chunk); request.on('end', async () => { try { send(response, 200, { results: await search(JSON.parse(body)) }); } catch (error) { send(response, error.statusCode || 502, { error: error.message }); } }); return;
+    let body = '';
+    request.on('data', chunk => body += chunk);
+    request.on('end', async () => {
+      try {
+        const query = JSON.parse(body);
+        const stream = request.headers.accept === 'application/x-ndjson' &&
+          query.scope === 'international' && (!query.destination || query.destination === 'all');
+        if (!stream) return send(response, 200, await search(query));
+        response.writeHead(200, {
+          ...securityHeaders, 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store'
+        });
+        response.flushHeaders();
+        const write = event => {
+          if (!response.destroyed) response.write(JSON.stringify(event) + '\n');
+        };
+        try {
+          const result = await search(query, coverage => write({ type: 'progress', coverage }));
+          write({ type: 'result', ...result });
+        } catch (error) {
+          write({ type: 'error', error: redactError(error), coverage: error.coverage });
+        }
+        return response.end();
+      } catch (error) {
+        return send(response, error.statusCode || 502, { error: redactError(error), coverage: error.coverage });
+      }
+    });
+    return;
   }
   if ((request.url === '/' || request.url === '/index.html') && request.method === 'GET') {
     response.writeHead(200, { ...securityHeaders, 'Content-Type': 'text/html; charset=utf-8' });
@@ -849,13 +1302,21 @@ function createServer() { return http.createServer(async (request, response) => 
   }
   send(response, 404, { error: 'Not found' });
 }); }
-function send(response, status, data) { response.writeHead(status, { ...securityHeaders, 'Content-Type': 'application/json; charset=utf-8' }); response.end(JSON.stringify(data)); }
+function redactError(error) {
+  let message = String(error.message || '请求未完成');
+  for (const key of [effective('AI_API_KEY'), effective('FLYAI_API_KEY')]) {
+    if (key) message = message.replaceAll(key, '[已隐藏]');
+  }
+  return message;
+}
+
+function send(response, status, data) { response.writeHead(status, { ...securityHeaders, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); response.end(JSON.stringify(data)); }
 
 function startServer(options = {}) {
   const host = options.host || defaultHost;
   const port = Number.isFinite(options.port) ? options.port : defaultPort;
   flyaiRunner = typeof options.flyaiRunner === 'function' ? options.flyaiRunner : null;
-  const server = createServer();
+  const server = createServer(host);
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, host, () => {

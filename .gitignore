@@ -2,6 +2,10 @@
 .env.*
 !.env.example
 .flymap-config.json
+.npmrc
+*.log
+.tmp/
+coverage/
 node_modules/
 out/
 output/

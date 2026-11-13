@@ -12,7 +12,11 @@ module.exports = {
     'desktop/**/*',
     'server.js',
     'index.html',
-    'assets/**/*',
+    'assets/app-icon.*',
+    'assets/airport-coordinates.json',
+    'assets/departure-map.webp',
+    'assets/international-destinations.js',
+    'assets/world-land.geojson',
     'package.json',
     '!node_modules/**/*'
   ],
