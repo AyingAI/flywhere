@@ -1,6 +1,6 @@
 {
   "name": "flywhere",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "productName": "飞哪里 FlyWhere",
   "main": "desktop/main.js",

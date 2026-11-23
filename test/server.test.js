@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const { startServer } = require('../server');
+const { startServer, estimatedSegmentFeeForDistance } = require('../server');
 
 test('saved credentials are restricted to the configured AI endpoint', async () => {
   const { mkdtemp, rm } = require('node:fs/promises');
@@ -529,6 +529,68 @@ test('round-trip exploration checks separate tickets beyond the first four desti
     assert.equal(results[0].totalPrice, 2050);
     assert.equal(coverage.completed, coverage.planned);
     assert.equal(coverage.failed, 0);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('domestic fallback applies the short-haul rate at exactly 800 km', () => {
+  assert.deepEqual(estimatedSegmentFeeForDistance(800), { distanceKm: 800, amount: 130 });
+  assert.deepEqual(estimatedSegmentFeeForDistance(800.1), { distanceKm: 800, amount: 190 });
+  assert.deepEqual(estimatedSegmentFeeForDistance(801), { distanceKm: 801, amount: 190 });
+});
+
+test('domestic ranking uses estimated round-trip fees and preserves an explicit zero', { timeout: 25000 }, async () => {
+  const cities = { CAN: '广州', XMN: '厦门', BJS: '北京', HGH: '杭州' };
+  const fares = { XMN: 350, BJS: 310, HGH: 550 };
+  const flight = (from, to, fare, date, taxFee) => ({
+    ticketPrice: fare,
+    ...(taxFee === undefined ? {} : { taxFee }),
+    journeys: [{
+      journeyType: '直达',
+      totalDuration: '120',
+      segments: [{
+        depCityCode: from, depCityName: cities[from], depStationCode: from, depDateTime: `${date} 09:00:00`,
+        arrCityCode: to, arrCityName: cities[to], arrStationCode: to, arrDateTime: `${date} 11:00:00`,
+        duration: '120', marketingTransportName: '测试航司'
+      }]
+    }]
+  });
+  const { server, url } = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    flyaiRunner: async ({ args }) => {
+      const argument = name => args.includes(name) ? args[args.indexOf(name) + 1] : undefined;
+      const origin = argument('--origin');
+      const destination = argument('--destination');
+      const date = argument('--dep-date');
+      let itemList = [];
+      if (!destination) {
+        itemList = Object.keys(fares).map(code => flight('CAN', code, fares[code], date, code === 'HGH' ? 0 : undefined));
+      } else if (Object.hasOwn(fares, origin) && destination === '广州') {
+        itemList = [flight(origin, 'CAN', fares[origin], date, origin === 'HGH' ? '0' : undefined)];
+      }
+      return { data: { itemList } };
+    }
+  });
+  try {
+    const response = await fetch(`${url}/api/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: url },
+      body: JSON.stringify({
+        origin: '广州', destination: 'all', trip: 'round',
+        depDate: '2026-12-08', backDate: '2026-12-12', passengers: 2
+      })
+    });
+    const result = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(result));
+    // The old estimate ranked Beijing first (¥1720 vs. Xiamen's ¥1760 for two adults).
+    assert.deepEqual(result.results.map(({ city, rank, fare, fees, totalPrice }) => ({ city, rank, fare, fees, totalPrice })), [
+      { city: '厦门', rank: 1, fare: 700, fees: 260, totalPrice: 1920 },
+      { city: '北京', rank: 2, fare: 620, fees: 380, totalPrice: 2000 },
+      { city: '杭州', rank: 3, fare: 1100, fees: 0, totalPrice: 2200 }
+    ]);
+    assert.equal(result.results[2].feeSource, '接口');
   } finally {
     await new Promise(resolve => server.close(resolve));
   }

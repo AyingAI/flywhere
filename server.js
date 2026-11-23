@@ -14,7 +14,7 @@ const bundledFlyaiPath = process.env.FLYAI_CLI_PATH || '';
 const configPath = process.env.FLYWHERE_CONFIG_PATH ? path.resolve(process.env.FLYWHERE_CONFIG_PATH) : path.join(__dirname, '.flymap-config.json');
 const encryptedValuePrefix = 'safe-storage:';
 let localConfig = loadLocalConfig();
-const feePolicy = { airportConstruction: 50, shortHaulFuelSurcharge: 40, longHaulFuelSurcharge: 70, thresholdKm: 800, updatedAt: '2026-08-05', source: '按航段大圆距离估算；FlyAI 返回实际费用时以接口为准' };
+const feePolicy = { airportConstruction: 50, shortHaulFuelSurcharge: 80, longHaulFuelSurcharge: 140, thresholdKm: 800, updatedAt: '2026-11-05', source: '按航段大圆距离估算；FlyAI 返回实际费用时以接口为准' };
 const airportCoordinates = {
   CAN: [113.30, 23.39], SZX: [113.81, 22.64], ZUH: [113.38, 22.01], FUO: [113.07, 23.08], HKG: [113.92, 22.31], MFM: [113.59, 22.15],
   PEK: [116.60, 40.08], PKX: [116.41, 39.51], BJS: [116.40, 39.90], SHA: [121.34, 31.20], PVG: [121.80, 31.14],
@@ -508,14 +508,17 @@ function greatCircleDistanceKm(from, to) {
   const latitudeDelta = radians(toLatitude - fromLatitude);
   const longitudeDelta = radians(toLongitude - fromLongitude);
   const arc = Math.sin(latitudeDelta / 2) ** 2 + Math.cos(radians(fromLatitude)) * Math.cos(radians(toLatitude)) * Math.sin(longitudeDelta / 2) ** 2;
-  return Math.round(6371 * 2 * Math.atan2(Math.sqrt(arc), Math.sqrt(1 - arc)));
+  return 6371 * 2 * Math.atan2(Math.sqrt(arc), Math.sqrt(1 - arc));
+}
+
+function estimatedSegmentFeeForDistance(distanceKm) {
+  if (!Number.isFinite(distanceKm)) return null;
+  const fuelSurcharge = distanceKm <= feePolicy.thresholdKm ? feePolicy.shortHaulFuelSurcharge : feePolicy.longHaulFuelSurcharge;
+  return { distanceKm: Math.round(distanceKm), amount: feePolicy.airportConstruction + fuelSurcharge };
 }
 
 function estimatedSegmentFee(segment) {
-  const distanceKm = greatCircleDistanceKm(segmentCoordinate(segment, 'dep'), segmentCoordinate(segment, 'arr'));
-  if (!Number.isFinite(distanceKm)) return null;
-  const fuelSurcharge = distanceKm <= feePolicy.thresholdKm ? feePolicy.shortHaulFuelSurcharge : feePolicy.longHaulFuelSurcharge;
-  return { distanceKm, amount: feePolicy.airportConstruction + fuelSurcharge };
+  return estimatedSegmentFeeForDistance(greatCircleDistanceKm(segmentCoordinate(segment, 'dep'), segmentCoordinate(segment, 'arr')));
 }
 
 function estimatedJourneyFee(segments) {
@@ -1103,8 +1106,8 @@ function makeResult(outbound, inbound, query, quote) {
   const people = Math.max(1, Number(query.passengers || 1));
   const outboundFee = quote ? { amount: quote.fee ?? 0, source: '接口', pending: quote.feesPending ?? quote.fee === null } : airportFee(outbound);
   const inboundFee = inbound && !quote ? airportFee(inbound) : { amount: 0 };
-  const feeItems = [outboundFee, inboundFee].filter(item => item.amount > 0);
-  const feeSources = quote?.fee === 0 ? ['接口'] : [...new Set(feeItems.map(item => item.source))];
+  const feeItems = [outboundFee, inboundFee].filter(item => item.amount > 0 || (item.source === '接口' && !item.pending));
+  const feeSources = [...new Set(feeItems.map(item => item.source))];
   const feeDistanceKm = feeItems.every(item => Number.isFinite(item.distanceKm)) ? feeItems.reduce((total, item) => total + item.distanceKm, 0) : null;
   const fare = quote?.fare ?? (outbound.fare + (inbound?.fare || 0));
   const fees = outboundFee.amount + inboundFee.amount;
@@ -1336,4 +1339,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { startServer };
+module.exports = { startServer, estimatedSegmentFeeForDistance };

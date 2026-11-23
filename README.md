@@ -10,14 +10,14 @@
 
 飞哪里是一个本地运行的机票探索工具，提供 macOS 与 Windows 桌面应用，也可以用 Node.js 启动网页版。选好出发地和日期后，可以查单程或往返航班，也可以在国内和国际地图上比较不同目的地的票价、航线和行程时间。
 
-## 下载 v0.3.0
+## 下载 v0.3.1
 
-最新桌面安装包见 [v0.3.0 Release](https://github.com/AyingAI/flywhere/releases/tag/v0.3.0)：
+桌面安装包和 SHA-256 校验文件见 [v0.3.1 Release](https://github.com/AyingAI/flywhere/releases/tag/v0.3.1)。
 
 | 平台 | 安装包 | 适用系统 |
 | --- | --- | --- |
-| macOS | [FlyWhere-0.3.0-universal.dmg](https://github.com/AyingAI/flywhere/releases/download/v0.3.0/FlyWhere-0.3.0-universal.dmg) | macOS 12+，Intel 与 Apple Silicon |
-| Windows | [FlyWhere-0.3.0-x64.exe](https://github.com/AyingAI/flywhere/releases/download/v0.3.0/FlyWhere-0.3.0-x64.exe) | Windows 10/11 x64 |
+| macOS | [FlyWhere-0.3.1-universal.dmg](https://github.com/AyingAI/flywhere/releases/download/v0.3.1/FlyWhere-0.3.1-universal.dmg) | macOS 12+，Intel 与 Apple Silicon |
+| Windows | [FlyWhere-0.3.1-x64.exe](https://github.com/AyingAI/flywhere/releases/download/v0.3.1/FlyWhere-0.3.1-x64.exe) | Windows 10/11 x64 |
 
 桌面安装包含 Node.js 运行环境和 FlyAI 航班查询组件，不需要另装 Node、npm、Git 或命令行工具。当前安装包未做代码签名和公证；请只从本仓库 Release 页下载，并在 Release 页核对 SHA-256。
 
@@ -27,22 +27,22 @@
 
 ### macOS
 
-1. 打开 [FlyWhere-0.3.0-universal.dmg](https://github.com/AyingAI/flywhere/releases/download/v0.3.0/FlyWhere-0.3.0-universal.dmg)。
+1. 打开 [FlyWhere-0.3.1-universal.dmg](https://github.com/AyingAI/flywhere/releases/download/v0.3.1/FlyWhere-0.3.1-universal.dmg)。
 2. 把“飞哪里 FlyWhere”拖入“应用程序”。
 3. 因安装包未公证，首次打开时系统可能要求确认；按 macOS 提示前往“隐私与安全性”允许打开。
 
 ### Windows
 
-1. 打开 [FlyWhere-0.3.0-x64.exe](https://github.com/AyingAI/flywhere/releases/download/v0.3.0/FlyWhere-0.3.0-x64.exe)。
+1. 打开 [FlyWhere-0.3.1-x64.exe](https://github.com/AyingAI/flywhere/releases/download/v0.3.1/FlyWhere-0.3.1-x64.exe)。
 2. 按安装向导选择目录并完成安装。
 3. 因安装包未签名，首次启动或安装时 Windows 可能显示发布者未知提示。
 
-### v0.3.0 更新重点
+### v0.3.1 更新重点
 
-- 新增全球航班和国际探索，可按城市或机场查单程及往返。国际探索会逐个显示候选目的地的查询状态。
-- 国际地图显示从出发机场到目的地的航线，支持整块地图拖动、滚轮缩放和重置视野。
-- 国内搜索支持按每程飞行时长筛选并避开红眼航段。目的地排序与代表航班同步，航班详情可跨航司比较报价。
-- 已保存的 AI Key 仅可用于原接口地址。桌面版升级了 Electron。
+- 国内航班缺少税费时，按成人每航段估算燃油附加费。800 公里及以内为 80 元，超过 800 公里为 140 元。目的地按计入新费率的总价排序。
+- FlyAI 返回的实际税费优先。接口明确返回 0 元时，页面显示费用来自航班接口。
+
+[查看 v0.3.0 更新记录](https://github.com/AyingAI/flywhere/releases/tag/v0.3.0)。
 
 ### 首次使用
 
@@ -142,10 +142,12 @@ npm start
 
 费用遵循以下优先级：
 
-1. FlyAI 返回明确费用时，使用接口值。
-2. 接口没有费用明细时，按每个航段的大圆距离估算：
-   - 800 公里及以内：机场建设费 50 元 + 燃油附加费 40 元。
-   - 800 公里以上：机场建设费 50 元 + 燃油附加费 70 元。
+1. FlyAI 返回明确费用（包括 0 元）时，使用接口值。
+2. 接口没有费用明细且可计算各航段距离时，按每个航段的大圆距离估算中国内地普通成人航班的费用（燃油附加费自 2026 年 11 月 5 日起销售的客票适用，以售票日期为准）：
+   - 800 公里及以内：民航发展基金 50 元 + 燃油附加费 80 元。
+   - 800 公里以上：民航发展基金 50 元 + 燃油附加费 140 元。
+
+支线等特殊航班的费用以实际报价为准。 [国航燃油附加费公告](https://www.airchina.com.cn/zh-CN/content/c/2026-11-02/30816.shtml) · [财政部民航发展基金说明](https://yss.mof.gov.cn/2024zyjs/202507/t20250715_3967876.htm)
 
 搜索前可选择成人数量，结果显示预估总价和人均价格。调整人数会在本地即时重算。页面会标注费用来源，最终价格和同价位余票以飞猪下单页为准。
 
